@@ -76,8 +76,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-header {font-size: 2.2rem; font-weight: bold; color: #1a9641; text-align: center; padding: 0.5rem;}
-    .sub-header {font-size: 1rem; color: #666; text-align: center; margin-bottom: 1rem;}
+    .main-header {font-size: 2.2rem; font-weight: bold; color: #00BFFF; text-align: center; padding: 0.5rem;}
     
     /* Reducir tamaño de métricas KPI - más compacto */
     [data-testid="stMetricValue"] {
@@ -105,6 +104,10 @@ ZONAS_MANEJO_PATH = "datos/Zonas_Manejo_TODOS.gpkg"
 
 # Ruta al logo (PNG o JPG)
 LOGO_PATH = 'datos/logo.png'
+LOGO_CLIENTE_PATH = 'datos/abudycia_logo.jpeg'
+
+# Color corporativo TeMapeo
+COLOR_TEMAPEO = '#00BFFF'  # Celeste TeMapeo
 
 # =============================================================================
 # COLORES Y CONFIGURACIÓN
@@ -198,14 +201,28 @@ def mostrar_logo_sidebar():
 
 
 def mostrar_logo_header():
-    """Muestra el logo en el header."""
-    if os.path.exists(LOGO_PATH):
+    """Muestra el logo del cliente centrado y título estilizado."""
+    # Primero intentar logo del cliente, si no existe usar logo TeMapeo
+    logo_a_mostrar = None
+    if os.path.exists(LOGO_CLIENTE_PATH):
+        logo_a_mostrar = LOGO_CLIENTE_PATH
+    elif os.path.exists(LOGO_PATH):
+        logo_a_mostrar = LOGO_PATH
+    
+    if logo_a_mostrar:
         try:
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                st.image(LOGO_PATH, width=220)
+                st.image(logo_a_mostrar, use_container_width=False, width=280)
         except:
             pass
+    
+    # Título centrado con estilo TeMapeo
+    st.markdown(f"""
+    <h1 style="text-align: center; color: {COLOR_TEMAPEO}; font-weight: 800; font-size: 2.2rem; margin-top: 0.5rem; margin-bottom: 0.2rem;">
+        Dashboard de Individualización de Árboles Frutales
+    </h1>
+    """, unsafe_allow_html=True)
 
 
 @st.cache_data
@@ -1657,7 +1674,6 @@ def crear_sidebar(df):
 
 def main():
     mostrar_logo_header()
-    st.markdown('<p class="sub-header">Dashboard de Individualización de Árboles Frutales</p>', unsafe_allow_html=True)
     
     # Cargar datos
     df = cargar_datos(GPKG_PATH)
