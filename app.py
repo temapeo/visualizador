@@ -190,10 +190,6 @@ def mostrar_logo_header():
     """Muestra el logo del cliente centrado y título estilizado."""
     logo_mostrado = False
     
-    # DEBUG: Ver qué archivos hay en datos/
-    # if os.path.exists('datos'):
-    #     st.caption(f"DEBUG - Archivos en datos/: {os.listdir('datos')}")
-    
     # Lista de posibles rutas del logo del cliente (en orden de prioridad)
     logos_posibles = [
         'datos/abudycia_logo.jpeg',
@@ -210,9 +206,25 @@ def mostrar_logo_header():
     for logo_path in logos_posibles:
         if os.path.exists(logo_path):
             try:
-                col1, col2, col3 = st.columns([1, 2, 1])
-                with col2:
-                    st.image(logo_path, width=280)
+                # Usar HTML/CSS para centrar la imagen
+                import base64
+                with open(logo_path, "rb") as f:
+                    img_data = base64.b64encode(f.read()).decode()
+                
+                # Detectar tipo de imagen
+                if logo_path.endswith('.png'):
+                    img_type = 'png'
+                elif logo_path.endswith('.jpg') or logo_path.endswith('.jpeg'):
+                    img_type = 'jpeg'
+                else:
+                    img_type = 'png'
+                
+                st.markdown(f"""
+                <div style="display: flex; justify-content: center; margin-bottom: 10px;">
+                    <img src="data:image/{img_type};base64,{img_data}" width="280">
+                </div>
+                """, unsafe_allow_html=True)
+                
                 logo_mostrado = True
                 break
             except Exception as e:
