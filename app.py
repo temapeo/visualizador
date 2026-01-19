@@ -81,7 +81,7 @@ st.markdown("""
 # CONFIGURACIÓN - RUTAS PARA STREAMLIT CLOUD
 # =============================================================================
 
-GPKG_PATH = "datos/Individualizacion_consolidado_oct_dic.gpkg"
+GPKG_PATH = "datos/BD_FINAL_todos_cultivos_vuelos.gpkg"
 POLIGONOS_PATH = "datos/Poligonos_Abud.gpkg"
 ZONAS_MANEJO_PATH = "datos/Zonas_Manejo_TODOS.gpkg"
 
