@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v8 - Dashboard con 7 Clases y Múltiples Cultivos
-- Simbología de 7 clases estandarizada
-- Soporte para Cerezos y Kiwis
-- Filtro por cultivo
-- Comparación temporal de hasta 3 vuelos
+TEMAPEO VIEWER v8 - Dashboard con Zonas de Manejo
+- Visualización de índices espectrales por árbol
+- Zonas de Manejo para gestión operativa
+- Comparación multi-temporal
+- Métricas por superficie
 
 Autor: TeMapeo SPA
 Versión: 8.0
@@ -81,8 +81,9 @@ st.markdown("""
 # CONFIGURACIÓN - RUTAS PARA STREAMLIT CLOUD
 # =============================================================================
 
-GPKG_PATH = "datos/BD_FINAL_todos_cultivos_vuelos.gpkg"
+GPKG_PATH = "datos/Individualizacion_consolidado_oct_dic.gpkg"
 POLIGONOS_PATH = "datos/Poligonos_Abud.gpkg"
+ZONAS_MANEJO_PATH = "datos/Zonas_Manejo_TODOS.gpkg"
 
 # Ruta al logo (PNG o JPG)
 LOGO_PATH = 'datos/logo.png'
@@ -92,18 +93,34 @@ LOGO_PATH = 'datos/logo.png'
 # =============================================================================
 
 COLORES_CLASE = {
-    'Muy bajo': '#D73027',      # Rojo
-    'Bajo': '#FC8D59',          # Naranja
-    'Medio-bajo': '#FEE08B',    # Amarillo
-    'Medio': '#D9EF8B',         # Verde amarillo
-    'Medio-alto': '#91CF60',    # Verde claro
-    'Alto': '#1A9850',          # Verde
-    'Muy alto': '#006837',      # Verde oscuro
-    'Sin dato': '#BDBDBD'       # Gris
+    'Muy bajo': '#d7191c',
+    'Bajo': '#fdae61', 
+    'Medio': '#ffffbf',
+    'Medio-alto': '#a6d96a',
+    'Alto': '#1a9641',
+    'Sin dato': '#969696'
 }
 
-# Orden de clases para gráficos
-ORDEN_CLASES = ['Muy bajo', 'Bajo', 'Medio-bajo', 'Medio', 'Medio-alto', 'Alto', 'Muy alto']
+# Colores para Zonas de Manejo (3 clases - semáforo)
+COLORES_ZONAS_MANEJO = {
+    1: '#D73027',  # Baja - Rojo
+    2: '#FEE04F',  # Media - Amarillo
+    3: '#1A9850',  # Alta - Verde
+}
+
+NOMBRES_ZONAS_MANEJO = {
+    1: 'Baja',
+    2: 'Media',
+    3: 'Alta'
+}
+
+# Rangos por índice para zonas de manejo
+RANGOS_ZONAS_MANEJO = {
+    'ndvi': {'baja': '< 0.50', 'media': '0.50 - 0.70', 'alta': '> 0.70'},
+    'osavi': {'baja': '< 0.40', 'media': '0.40 - 0.60', 'alta': '> 0.60'},
+    'ndre': {'baja': '< 0.35', 'media': '0.35 - 0.55', 'alta': '> 0.55'},
+    'lci': {'baja': '< 0.45', 'media': '0.45 - 0.65', 'alta': '> 0.65'},
+}
 
 # Información detallada de cada índice
 INDICES_INFO = {
@@ -282,39 +299,16 @@ def mostrar_logo_header():
 
 @st.cache_data
 def cargar_datos(ruta_gpkg):
-    """Carga datos del GPKG y extrae coordenadas de la geometría."""
+    """Carga datos del GPKG."""
     try:
         gdf = gpd.read_file(ruta_gpkg)
-        if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+        if gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs(epsg=4326)
-        
-        # SIEMPRE extraer coordenadas de la geometría (más confiable que columnas lat/lon)
-        if 'geometry' in gdf.columns and gdf.geometry is not None:
-            gdf['lon'] = gdf.geometry.x
-            gdf['lat'] = gdf.geometry.y
-        
-        # Si aún hay NaN, intentar desde column_geografic
-        if 'column_geografic' in gdf.columns:
-            mask_sin_coords = gdf['lat'].isna() | gdf['lon'].isna()
-            if mask_sin_coords.any():
-                def extraer_coords(coord_str):
-                    if pd.isna(coord_str) or coord_str == '':
-                        return None, None
-                    try:
-                        partes = str(coord_str).split(',')
-                        if len(partes) >= 2:
-                            return float(partes[0].strip()), float(partes[1].strip())
-                    except:
-                        pass
-                    return None, None
-                
-                coords = gdf.loc[mask_sin_coords, 'column_geografic'].apply(extraer_coords)
-                gdf.loc[mask_sin_coords, 'lat'] = coords.apply(lambda x: x[0])
-                gdf.loc[mask_sin_coords, 'lon'] = coords.apply(lambda x: x[1])
-        
-        return pd.DataFrame(gdf.drop(columns='geometry', errors='ignore'))
+        gdf['lon'] = gdf.geometry.x
+        gdf['lat'] = gdf.geometry.y
+        return pd.DataFrame(gdf.drop(columns='geometry'))
     except Exception as e:
-        st.error(f"Error cargando datos: {e}")
+        st.error(f"Error: {e}")
         return None
 
 
@@ -330,6 +324,21 @@ def cargar_poligonos(ruta_gpkg):
         return gdf
     except Exception as e:
         st.warning(f"No se pudieron cargar polígonos: {e}")
+        return None
+
+
+@st.cache_data
+def cargar_zonas_manejo(ruta_gpkg):
+    """Carga zonas de manejo."""
+    try:
+        if not os.path.exists(ruta_gpkg):
+            return None
+        gdf = gpd.read_file(ruta_gpkg)
+        if gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
+        return gdf
+    except Exception as e:
+        st.warning(f"No se pudieron cargar zonas de manejo: {e}")
         return None
 
 
@@ -363,37 +372,12 @@ def obtener_info_superficie(df_puntos, gdf_poligonos, cuarteles_filtrados=None):
 
 
 def asignar_color_hex(clase):
-    """Asigna color según clase (7 clases) - maneja valores numéricos y texto."""
-    if pd.isna(clase):
-        return COLORES_CLASE['Sin dato']
-    
-    # Intentar como número primero
-    try:
-        clase_num = int(float(clase))
-        mapeo_num = {
-            1: 'Muy bajo',
-            2: 'Bajo', 
-            3: 'Medio-bajo',
-            4: 'Medio',
-            5: 'Medio-alto',
-            6: 'Alto',
-            7: 'Muy alto'
-        }
-        clase_texto = mapeo_num.get(clase_num, 'Sin dato')
-        return COLORES_CLASE.get(clase_texto, COLORES_CLASE['Sin dato'])
-    except (ValueError, TypeError):
-        pass
-    
-    # Si es texto, clasificar por contenido
+    """Asigna color según clase."""
     clase_str = str(clase).lower()
     if 'muy bajo' in clase_str:
         return COLORES_CLASE['Muy bajo']
-    elif 'medio-bajo' in clase_str or 'medio bajo' in clase_str:
-        return COLORES_CLASE['Medio-bajo']
     elif 'bajo' in clase_str and 'muy' not in clase_str and 'medio' not in clase_str:
         return COLORES_CLASE['Bajo']
-    elif 'muy alto' in clase_str:
-        return COLORES_CLASE['Muy alto']
     elif 'medio-alto' in clase_str or 'medio alto' in clase_str:
         return COLORES_CLASE['Medio-alto']
     elif 'medio' in clase_str:
@@ -433,22 +417,20 @@ def generar_analisis_automatico(df, indice, fechas_sel='Todas'):
     mediana = df[indice].median()
     n_total = len(df)
     
-    # Distribución por clases (7 clases)
+    # Distribución por clases
     if col_clase in df.columns:
         n_muy_bajo = sum(1 for x in df[col_clase] if 'muy bajo' in str(x).lower())
-        n_bajo = sum(1 for x in df[col_clase] if str(x).lower() == 'bajo' or (str(x).lower().endswith('bajo') and 'muy' not in str(x).lower() and 'medio' not in str(x).lower()))
-        n_medio_bajo = sum(1 for x in df[col_clase] if 'medio-bajo' in str(x).lower() or 'medio bajo' in str(x).lower())
-        n_medio = sum(1 for x in df[col_clase] if str(x).lower() == 'medio')
+        n_bajo = sum(1 for x in df[col_clase] if 'bajo' in str(x).lower() and 'muy' not in str(x).lower())
+        n_medio = sum(1 for x in df[col_clase] if 'medio' in str(x).lower() and 'alto' not in str(x).lower())
         n_medio_alto = sum(1 for x in df[col_clase] if 'medio-alto' in str(x).lower() or 'medio alto' in str(x).lower())
-        n_alto = sum(1 for x in df[col_clase] if str(x).lower() == 'alto')
-        n_muy_alto = sum(1 for x in df[col_clase] if 'muy alto' in str(x).lower())
+        n_alto = sum(1 for x in df[col_clase] if 'alto' in str(x).lower() and 'medio' not in str(x).lower())
         
-        pct_sanos = ((n_alto + n_muy_alto + n_medio_alto) / n_total * 100) if n_total > 0 else 0
+        pct_sanos = ((n_alto + n_medio_alto) / n_total * 100) if n_total > 0 else 0
         pct_problematicos = ((n_muy_bajo + n_bajo) / n_total * 100) if n_total > 0 else 0
     else:
         pct_sanos = 0
         pct_problematicos = 0
-        n_muy_bajo = n_bajo = n_medio_bajo = n_medio = n_medio_alto = n_alto = n_muy_alto = 0
+        n_muy_bajo = n_bajo = n_medio = n_medio_alto = n_alto = 0
     
     # Análisis por cuartel
     cuarteles_problematicos = []
@@ -497,9 +479,9 @@ def generar_analisis_automatico(df, indice, fechas_sel='Todas'):
     st.markdown("#### 📊 Distribución del Cultivo:")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("✅ Sanos (Alto + Muy Alto + Medio-Alto)", f"{pct_sanos:.1f}%", f"{n_alto + n_muy_alto + n_medio_alto:,} árboles")
+        st.metric("✅ Sanos (Alto + Medio-Alto)", f"{pct_sanos:.1f}%", f"{n_alto + n_medio_alto:,} árboles")
     with col2:
-        st.metric("⚠️ Monitorear (Medio + Medio-Bajo)", f"{(n_medio + n_medio_bajo)/n_total*100:.1f}%", f"{n_medio + n_medio_bajo:,} árboles")
+        st.metric("⚠️ Monitorear (Medio)", f"{n_medio/n_total*100:.1f}%", f"{n_medio:,} árboles")
     with col3:
         st.metric("🚨 Problemáticos (Bajo + Muy Bajo)", f"{pct_problematicos:.1f}%", f"{n_muy_bajo + n_bajo:,} árboles")
     
@@ -703,57 +685,27 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
                     showlegend=False
                 ))
     
-    # Agrupar puntos por clase para la leyenda - manejar tanto valores numéricos como texto
-    def clasificar_punto(clase_valor):
-        # Si es numérico, mapear a etiqueta
-        if pd.isna(clase_valor):
-            return 'Sin dato'
-        
-        # Intentar como número primero
-        try:
-            clase_num = int(float(clase_valor))
-            mapeo_num = {
-                1: 'Muy bajo',
-                2: 'Bajo', 
-                3: 'Medio-bajo',
-                4: 'Medio',
-                5: 'Medio-alto',
-                6: 'Alto',
-                7: 'Muy alto'
-            }
-            return mapeo_num.get(clase_num, 'Sin dato')
-        except (ValueError, TypeError):
-            pass
-        
-        # Si es texto, clasificar por contenido
-        clase_lower = str(clase_valor).lower()
+    # Agrupar puntos por clase para la leyenda
+    def clasificar_punto(clase_str):
+        clase_lower = str(clase_str).lower()
         if 'muy bajo' in clase_lower:
             return 'Muy bajo'
-        elif 'medio-bajo' in clase_lower or 'medio bajo' in clase_lower:
-            return 'Medio-bajo'
-        elif 'bajo' in clase_lower:
-            return 'Bajo'
-        elif 'muy alto' in clase_lower:
-            return 'Muy alto'
         elif 'medio-alto' in clase_lower or 'medio alto' in clase_lower:
             return 'Medio-alto'
         elif 'medio' in clase_lower:
             return 'Medio'
+        elif 'bajo' in clase_lower:
+            return 'Bajo'
         elif 'alto' in clase_lower:
             return 'Alto'
         return 'Sin dato'
     
     df_plot['clase_simple'] = df_plot[col_clase].apply(clasificar_punto)
     
-    clases_orden = ['Muy bajo', 'Bajo', 'Medio-bajo', 'Medio', 'Medio-alto', 'Alto', 'Muy alto']
+    clases_orden = ['Muy bajo', 'Bajo', 'Medio', 'Medio-alto', 'Alto']
     
     for clase in clases_orden:
         df_clase = df_plot[df_plot['clase_simple'] == clase]
-        if len(df_clase) == 0:
-            continue
-        
-        # Filtrar puntos sin coordenadas válidas
-        df_clase = df_clase[df_clase['lat'].notna() & df_clase['lon'].notna()]
         if len(df_clase) == 0:
             continue
         
@@ -764,9 +716,9 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
             lat=df_clase['lat'],
             mode='markers',
             marker=dict(
-                size=radio_puntos * 4,  # Aumentado de 3 a 4
+                size=radio_puntos * 3,
                 color=color,
-                opacity=0.9
+                opacity=0.8
             ),
             name=clase,
             hoverinfo='text',
@@ -829,7 +781,7 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
     return fig
 
 
-def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None, center_lat=None, center_lon=None, zoom=None):
+def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None):
     """Crea mapa con Plotly usando tiles satelitales de Google."""
     col_clase = f"{indice}_clase"
     if col_clase not in df.columns or len(df) == 0:
@@ -901,57 +853,27 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
                     showlegend=False
                 ))
     
-    # Agrupar puntos por clase - manejar tanto valores numéricos como texto
-    def clasificar_punto(clase_valor):
-        # Si es numérico, mapear a etiqueta
-        if pd.isna(clase_valor):
-            return 'Sin dato'
-        
-        # Intentar como número primero
-        try:
-            clase_num = int(float(clase_valor))
-            mapeo_num = {
-                1: 'Muy bajo',
-                2: 'Bajo', 
-                3: 'Medio-bajo',
-                4: 'Medio',
-                5: 'Medio-alto',
-                6: 'Alto',
-                7: 'Muy alto'
-            }
-            return mapeo_num.get(clase_num, 'Sin dato')
-        except (ValueError, TypeError):
-            pass
-        
-        # Si es texto, clasificar por contenido
-        clase_lower = str(clase_valor).lower()
+    # Agrupar puntos por clase usando la misma lógica que asignar_color_hex
+    def clasificar_punto(clase_str):
+        clase_lower = str(clase_str).lower()
         if 'muy bajo' in clase_lower:
             return 'Muy bajo'
-        elif 'medio-bajo' in clase_lower or 'medio bajo' in clase_lower:
-            return 'Medio-bajo'
-        elif 'bajo' in clase_lower:
-            return 'Bajo'
-        elif 'muy alto' in clase_lower:
-            return 'Muy alto'
         elif 'medio-alto' in clase_lower or 'medio alto' in clase_lower:
             return 'Medio-alto'
         elif 'medio' in clase_lower:
             return 'Medio'
+        elif 'bajo' in clase_lower:
+            return 'Bajo'
         elif 'alto' in clase_lower:
             return 'Alto'
         return 'Sin dato'
     
     df_plot['clase_simple'] = df_plot[col_clase].apply(clasificar_punto)
     
-    clases_orden = ['Muy bajo', 'Bajo', 'Medio-bajo', 'Medio', 'Medio-alto', 'Alto', 'Muy alto']
+    clases_orden = ['Muy bajo', 'Bajo', 'Medio', 'Medio-alto', 'Alto']
     
     for clase in clases_orden:
         df_clase = df_plot[df_plot['clase_simple'] == clase]
-        if len(df_clase) == 0:
-            continue
-        
-        # Filtrar puntos sin coordenadas válidas
-        df_clase = df_clase[df_clase['lat'].notna() & df_clase['lon'].notna()]
         if len(df_clase) == 0:
             continue
         
@@ -962,9 +884,9 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
             lat=df_clase['lat'],
             mode='markers',
             marker=dict(
-                size=radio_puntos * 4,  # Aumentado de 3 a 4
+                size=radio_puntos * 3,
                 color=color,
-                opacity=0.9
+                opacity=0.85
             ),
             name=clase,
             hoverinfo='text',
@@ -972,34 +894,31 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
             showlegend=True
         ))
     
-    # Usar centro y zoom externos si se proporcionan, sino calcular
-    if center_lat is None or center_lon is None:
-        center_lat = df['lat'].mean()
-        center_lon = df['lon'].mean()
+    center_lat = df['lat'].mean()
+    center_lon = df['lon'].mean()
     
-    if zoom is None:
-        lat_range = df['lat'].max() - df['lat'].min()
-        lon_range = df['lon'].max() - df['lon'].min()
-        max_range = max(lat_range, lon_range)
-        
-        # Agregar margen para ver el polígono completo (15% extra)
-        max_range = max_range * 1.15
-        
-        # Zoom ajustado para ver polígono completo
-        if max_range < 0.003:
-            zoom = 17
-        elif max_range < 0.006:
-            zoom = 16
-        elif max_range < 0.01:
-            zoom = 15
-        elif max_range < 0.02:
-            zoom = 14
-        elif max_range < 0.05:
-            zoom = 13
-        elif max_range < 0.1:
-            zoom = 12
-        else:
-            zoom = 11
+    lat_range = df['lat'].max() - df['lat'].min()
+    lon_range = df['lon'].max() - df['lon'].min()
+    max_range = max(lat_range, lon_range)
+    
+    # Agregar margen para ver el polígono completo (15% extra)
+    max_range = max_range * 1.15
+    
+    # Zoom ajustado para ver polígono completo
+    if max_range < 0.003:
+        zoom = 17
+    elif max_range < 0.006:
+        zoom = 16
+    elif max_range < 0.01:
+        zoom = 15
+    elif max_range < 0.02:
+        zoom = 14
+    elif max_range < 0.05:
+        zoom = 13
+    elif max_range < 0.1:
+        zoom = 12
+    else:
+        zoom = 11
     
     # Usar estilo white-bg con capa satelital de Google
     fig.update_layout(
@@ -1036,6 +955,232 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
     return fig
 
 
+def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, center_lon=None, zoom=None):
+    """Crea mapa de zonas de manejo con polígonos coloreados."""
+    if gdf_zonas is None or len(gdf_zonas) == 0:
+        return None
+    
+    # Filtrar por índice
+    gdf_filtrado = gdf_zonas[gdf_zonas['indice'] == indice].copy()
+    
+    if len(gdf_filtrado) == 0:
+        return None
+    
+    fig = go.Figure()
+    
+    # Agregar polígonos por clase
+    for clase in [1, 2, 3]:
+        gdf_clase = gdf_filtrado[gdf_filtrado['clase'] == clase]
+        if len(gdf_clase) == 0:
+            continue
+        
+        color = COLORES_ZONAS_MANEJO.get(clase, '#888888')
+        nombre_clase = NOMBRES_ZONAS_MANEJO.get(clase, f'Clase {clase}')
+        rangos = RANGOS_ZONAS_MANEJO.get(indice, {})
+        
+        if clase == 1:
+            rango_texto = rangos.get('baja', '')
+        elif clase == 2:
+            rango_texto = rangos.get('media', '')
+        else:
+            rango_texto = rangos.get('alta', '')
+        
+        for _, row in gdf_clase.iterrows():
+            geom = row.geometry
+            
+            # Manejar diferentes tipos de geometría
+            if geom.geom_type == 'Polygon':
+                polygons = [geom]
+            elif geom.geom_type == 'MultiPolygon':
+                polygons = list(geom.geoms)
+            else:
+                continue
+            
+            for poly in polygons:
+                try:
+                    coords = list(poly.exterior.coords)
+                    lons = [c[0] for c in coords]
+                    lats = [c[1] for c in coords]
+                    
+                    # Info hover
+                    area_ha = row.get('area_ha', 0)
+                    pct_area = row.get('pct_area', 0)
+                    n_arboles = row.get('n_arboles', 0)
+                    mean_val = row.get(f'{indice}_mean', 0)
+                    cuartel = row.get('cuartel', 'N/A')
+                    
+                    hover_text = (f"<b>Zona: {nombre_clase}</b><br>"
+                                 f"Rango: {rango_texto}<br>"
+                                 f"Cuartel: {cuartel}<br>"
+                                 f"Área: {area_ha:.2f} ha ({pct_area:.1f}%)<br>"
+                                 f"Árboles: {n_arboles:,}<br>"
+                                 f"{indice.upper()} μ: {mean_val:.3f}" if mean_val else "")
+                    
+                    fig.add_trace(go.Scattermapbox(
+                        lon=lons,
+                        lat=lats,
+                        mode='lines',
+                        fill='toself',
+                        fillcolor=color.replace(')', ',0.6)').replace('rgb', 'rgba') if 'rgb' in color else color + 'AA',
+                        line=dict(width=2, color='#333333'),
+                        name=f"{nombre_clase} ({rango_texto})",
+                        hoverinfo='text',
+                        hovertext=hover_text,
+                        showlegend=False
+                    ))
+                except:
+                    continue
+    
+    # Agregar leyenda manual con trazos invisibles
+    for clase in [1, 2, 3]:
+        color = COLORES_ZONAS_MANEJO.get(clase, '#888888')
+        nombre_clase = NOMBRES_ZONAS_MANEJO.get(clase, f'Clase {clase}')
+        rangos = RANGOS_ZONAS_MANEJO.get(indice, {})
+        
+        if clase == 1:
+            rango_texto = rangos.get('baja', '')
+        elif clase == 2:
+            rango_texto = rangos.get('media', '')
+        else:
+            rango_texto = rangos.get('alta', '')
+        
+        fig.add_trace(go.Scattermapbox(
+            lon=[None],
+            lat=[None],
+            mode='markers',
+            marker=dict(size=15, color=color),
+            name=f"{nombre_clase} ({rango_texto})",
+            showlegend=True
+        ))
+    
+    # Calcular centro y zoom si no se proporcionan
+    if center_lat is None or center_lon is None:
+        all_bounds = gdf_filtrado.total_bounds
+        center_lon = (all_bounds[0] + all_bounds[2]) / 2
+        center_lat = (all_bounds[1] + all_bounds[3]) / 2
+    
+    if zoom is None:
+        all_bounds = gdf_filtrado.total_bounds
+        lat_range = all_bounds[3] - all_bounds[1]
+        lon_range = all_bounds[2] - all_bounds[0]
+        max_range = max(lat_range, lon_range) * 1.15
+        
+        if max_range < 0.003:
+            zoom = 17
+        elif max_range < 0.006:
+            zoom = 16
+        elif max_range < 0.01:
+            zoom = 15
+        elif max_range < 0.02:
+            zoom = 14
+        elif max_range < 0.05:
+            zoom = 13
+        elif max_range < 0.1:
+            zoom = 12
+        else:
+            zoom = 11
+    
+    fig.update_layout(
+        mapbox=dict(
+            style="white-bg",
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=zoom,
+            layers=[{
+                "below": "traces",
+                "sourcetype": "raster",
+                "sourceattribution": "Google",
+                "source": [
+                    "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
+                ]
+            }]
+        ),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=500,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.9)",
+            font=dict(size=11)
+        ),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=11,
+            font_family="Arial"
+        )
+    )
+    
+    return fig
+
+
+def mostrar_metricas_zonas_manejo(gdf_zonas, indice, fecha=None):
+    """Muestra métricas de zonas de manejo por superficie."""
+    if gdf_zonas is None or len(gdf_zonas) == 0:
+        st.warning("No hay datos de zonas de manejo")
+        return
+    
+    # Filtrar por índice y fecha
+    gdf_filtrado = gdf_zonas[gdf_zonas['indice'] == indice].copy()
+    
+    if fecha and 'fecha_vuelo' in gdf_filtrado.columns:
+        gdf_filtrado = gdf_filtrado[gdf_filtrado['fecha_vuelo'].astype(str) == str(fecha)]
+    
+    if len(gdf_filtrado) == 0:
+        st.warning(f"No hay zonas de manejo para {indice.upper()}")
+        return
+    
+    # Calcular totales por clase
+    resumen = gdf_filtrado.groupby('clase').agg({
+        'area_ha': 'sum',
+        'area_m2': 'sum',
+        'n_arboles': 'sum'
+    }).reset_index()
+    
+    total_ha = resumen['area_ha'].sum()
+    total_arboles = resumen['n_arboles'].sum()
+    
+    # Mostrar métricas
+    cols = st.columns(4)
+    
+    with cols[0]:
+        st.metric("📐 Superficie Total", f"{total_ha:.2f} ha")
+    
+    for i, clase in enumerate([1, 2, 3]):
+        row = resumen[resumen['clase'] == clase]
+        if len(row) > 0:
+            area = row['area_ha'].values[0]
+            pct = (area / total_ha * 100) if total_ha > 0 else 0
+            nombre = NOMBRES_ZONAS_MANEJO.get(clase, f'Clase {clase}')
+            color = COLORES_ZONAS_MANEJO.get(clase, '#888')
+            
+            with cols[i + 1]:
+                st.metric(
+                    f"{nombre}",
+                    f"{area:.2f} ha",
+                    f"{pct:.1f}%"
+                )
+
+
+def mostrar_explicacion_zonas_manejo():
+    """Muestra explicación de qué son las zonas de manejo."""
+    st.info("""
+    **📍 ¿Qué son las Zonas de Manejo?**
+    
+    Las Zonas de Manejo agrupan la información de los índices espectrales en **3 categorías operativas** 
+    (Baja, Media, Alta) para facilitar la **toma de decisiones agronómicas** a nivel de campo.
+    
+    A diferencia del análisis por árbol individual, las zonas de manejo representan **superficies continuas** 
+    donde se puede aplicar un manejo diferenciado:
+    
+    - 🔴 **Zona Baja**: Requiere intervención prioritaria (fertilización, riego, control fitosanitario)
+    - 🟡 **Zona Media**: Monitorear evolución, manejo estándar
+    - 🟢 **Zona Alta**: Mantener manejo actual, vegetación en óptimas condiciones
+    
+    Esta zonificación permite planificar aplicaciones de **dosis variable** y optimizar recursos.
+    """)
+
+
 # =============================================================================
 # COMPONENTES DE GRÁFICOS
 # =============================================================================
@@ -1051,18 +1196,13 @@ def crear_grafico_distribucion(df, indice, titulo=""):
     conteo['Porcentaje'] = (conteo['Cantidad'] / conteo['Cantidad'].sum() * 100).round(1)
     
     # Orden correcto
-    orden_clases = ['muy bajo', 'bajo', 'medio-bajo', 'medio', 'medio-alto', 'alto', 'muy alto']
+    orden_clases = ['muy bajo', 'bajo', 'medio', 'medio-alto', 'alto']
     
     def obtener_orden(clase):
         clase_lower = str(clase).lower()
         for i, o in enumerate(orden_clases):
             if o in clase_lower:
-                # Verificar que no sea una coincidencia parcial incorrecta
-                if o == 'medio' and ('alto' in clase_lower or 'bajo' in clase_lower):
-                    continue
-                if o == 'bajo' and 'medio' in clase_lower:
-                    continue
-                if o == 'alto' and 'medio' in clase_lower:
+                if o == 'medio' and 'alto' in clase_lower:
                     continue
                 return i
         return 99
@@ -1075,14 +1215,10 @@ def crear_grafico_distribucion(df, indice, titulo=""):
         clase_lower = str(clase).lower()
         if 'muy bajo' in clase_lower:
             return 'Muy Bajo'
-        elif 'medio-bajo' in clase_lower or 'medio bajo' in clase_lower:
-            return 'Medio-Bajo'
-        elif 'bajo' in clase_lower:
-            return 'Bajo'
-        elif 'muy alto' in clase_lower:
-            return 'Muy Alto'
         elif 'medio-alto' in clase_lower or 'medio alto' in clase_lower:
             return 'Medio-Alto'
+        elif 'bajo' in clase_lower:
+            return 'Bajo'
         elif 'medio' in clase_lower:
             return 'Medio'
         elif 'alto' in clase_lower:
@@ -1142,29 +1278,6 @@ def crear_boxplot(df, indice, titulo=""):
 # FUNCIONES DE TABS
 # =============================================================================
 
-def calcular_pct_sanos(df, indice):
-    """Calcula el porcentaje de árboles sanos (clases Alto, Muy alto, Medio-alto)."""
-    col_clase = f"{indice}_clase"
-    if col_clase not in df.columns or len(df) == 0:
-        return 0
-    
-    def es_sano(valor):
-        if pd.isna(valor):
-            return False
-        # Si es numérico: clases 5 (Medio-alto), 6 (Alto), 7 (Muy alto) son sanos
-        try:
-            clase_num = int(float(valor))
-            return clase_num >= 5  # 5, 6, 7 son sanos
-        except (ValueError, TypeError):
-            pass
-        # Si es texto
-        valor_lower = str(valor).lower()
-        return ('alto' in valor_lower and 'bajo' not in valor_lower) or 'medio-alto' in valor_lower or 'medio alto' in valor_lower
-    
-    n_sanos = df[col_clase].apply(es_sano).sum()
-    return (n_sanos / len(df) * 100) if len(df) > 0 else 0
-
-
 def mostrar_kpis(df, indice, prefix="", info_superficie=None):
     """Muestra KPIs incluyendo superficie si está disponible."""
     
@@ -1188,8 +1301,10 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
             if indice in df.columns:
                 st.metric(f"📊 {indice.upper()} μ", f"{df[indice].mean():.3f}")
         with col2:
-            pct_sanos = calcular_pct_sanos(df, indice)
-            st.metric("✅ % Sanos", f"{pct_sanos:.1f}%")
+            col_clase = f"{indice}_clase"
+            if col_clase in df.columns:
+                pct = (df[col_clase].apply(lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()).sum() / len(df) * 100)
+                st.metric("✅ % Sanos", f"{pct:.1f}%")
         with col3:
             if 'altura_m' in df.columns and df['altura_m'].notna().any():
                 st.metric("📏 Altura μ", f"{df['altura_m'].mean():.2f} m")
@@ -1205,8 +1320,10 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
             if indice in df.columns:
                 st.metric(f"📊 {indice.upper()} μ", f"{df[indice].mean():.3f}")
         with cols[2]:
-            pct_sanos = calcular_pct_sanos(df, indice)
-            st.metric("✅ % Sanos", f"{pct_sanos:.1f}%")
+            col_clase = f"{indice}_clase"
+            if col_clase in df.columns:
+                pct = (df[col_clase].apply(lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()).sum() / len(df) * 100)
+                st.metric("✅ % Sanos", f"{pct:.1f}%")
         with cols[3]:
             if 'altura_m' in df.columns and df['altura_m'].notna().any():
                 st.metric("📏 Altura μ", f"{df['altura_m'].mean():.2f} m")
@@ -1215,102 +1332,114 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
                 st.metric("📍 Cuarteles", df['Cuartel'].nunique())
 
 
-def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
-    """Tab Resumen con comparación lado a lado (soporta hasta 3 vuelos)."""
+def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zonas_manejo=None):
+    """Tab Resumen con comparación lado a lado."""
     
     # Mostrar descripción del índice
     mostrar_descripcion_indice(indice)
     
-    # Obtener fechas únicas en los datos filtrados
     fechas_unicas = []
     if 'fecha_vuelo' in df.columns:
         fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
-    n_vuelos = len(fechas_unicas)
-    mostrar_comparacion = n_vuelos >= 2
+    mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
     
     # Obtener info de superficie
     info_sup = obtener_info_superficie(df, gdf_poligonos)
     
     if mostrar_comparacion:
-        st.subheader(f"📊 Comparación de {n_vuelos} Vuelos")
+        st.subheader("📊 Comparación de Vuelos")
         
-        # Preparar datos para cada vuelo
-        dfs_vuelos = []
-        infos_sup = []
-        for fecha in fechas_unicas:
-            df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
-            dfs_vuelos.append(df_vuelo)
-            infos_sup.append(obtener_info_superficie(df_vuelo, gdf_poligonos))
+        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
+        df1 = df[df['fecha_vuelo'].astype(str) == fecha1]
+        df2 = df[df['fecha_vuelo'].astype(str) == fecha2]
         
-        # KPIs - mostrar columnas según número de vuelos
-        cols = st.columns(n_vuelos)
-        for i, (fecha, df_vuelo, info_sup_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos, infos_sup)):
-            with cols[i]:
-                st.markdown(f"### 📅 Vuelo: {fecha}")
-                mostrar_kpis(df_vuelo, indice, info_superficie=info_sup_vuelo)
+        # Info superficie para cada vuelo
+        info_sup1 = obtener_info_superficie(df1, gdf_poligonos)
+        info_sup2 = obtener_info_superficie(df2, gdf_poligonos)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"### 📅 Vuelo: {fecha1}")
+            mostrar_kpis(df1, indice, info_superficie=info_sup1)
+        with col2:
+            st.markdown(f"### 📅 Vuelo: {fecha2}")
+            mostrar_kpis(df2, indice, info_superficie=info_sup2)
         
         st.markdown("---")
         
-        # Mapas sincronizados - calcular centro y zoom común
-        # Usar todos los datos para calcular el centro y zoom
-        all_lats = df['lat'].dropna()
-        all_lons = df['lon'].dropna()
+        col1, col2 = st.columns(2)
         
-        if len(all_lats) > 0 and len(all_lons) > 0:
-            center_lat = all_lats.mean()
-            center_lon = all_lons.mean()
-            lat_range = all_lats.max() - all_lats.min()
-            lon_range = all_lons.max() - all_lons.min()
-            max_range = max(lat_range, lon_range) * 1.15
+        with col1:
+            st.markdown(f"**🗺️ Mapa - {fecha1}**")
+            # Mostrar todos si hay menos de 10000, sino sampling a 8000
+            df1_sample = df1.sample(n=min(8000, len(df1)), random_state=42) if len(df1) > 10000 else df1
+            mapa1 = crear_mapa_plotly_satelite(df1_sample, indice, radio_puntos, f"{indice.upper()} - {fecha1}", gdf_poligonos)
+            if mapa1:
+                st.plotly_chart(mapa1, use_container_width=True, key="mapa1")
+        
+        with col2:
+            st.markdown(f"**🗺️ Mapa - {fecha2}**")
+            # Mostrar todos si hay menos de 10000, sino sampling a 8000
+            df2_sample = df2.sample(n=min(8000, len(df2)), random_state=42) if len(df2) > 10000 else df2
+            mapa2 = crear_mapa_plotly_satelite(df2_sample, indice, radio_puntos, f"{indice.upper()} - {fecha2}", gdf_poligonos)
+            if mapa2:
+                st.plotly_chart(mapa2, use_container_width=True, key="mapa2")
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            fig1 = crear_grafico_distribucion(df1, indice, f"Distribución - {fecha1}")
+            if fig1:
+                st.plotly_chart(fig1, use_container_width=True)
+        with col2:
+            fig2 = crear_grafico_distribucion(df2, indice, f"Distribución - {fecha2}")
+            if fig2:
+                st.plotly_chart(fig2, use_container_width=True)
+        
+        # === SECCIÓN ZONAS DE MANEJO ===
+        if gdf_zonas_manejo is not None and len(gdf_zonas_manejo) > 0:
+            st.markdown("---")
+            st.subheader("📍 Zonas de Manejo")
+            mostrar_explicacion_zonas_manejo()
             
-            # Calcular zoom
-            if max_range < 0.003:
-                zoom_comun = 17
-            elif max_range < 0.006:
-                zoom_comun = 16
-            elif max_range < 0.01:
-                zoom_comun = 15
-            elif max_range < 0.02:
-                zoom_comun = 14
-            elif max_range < 0.05:
-                zoom_comun = 13
-            elif max_range < 0.1:
-                zoom_comun = 12
-            else:
-                zoom_comun = 11
-        else:
-            center_lat, center_lon, zoom_comun = -35.01, -71.34, 14
-        
-        # Crear mapas con centro y zoom compartido
-        cols = st.columns(n_vuelos)
-        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
-            with cols[i]:
-                st.markdown(f"**🗺️ Mapa - {fecha}**")
-                # Sampling si hay muchos puntos
-                df_sample = df_vuelo.sample(n=min(8000, len(df_vuelo)), random_state=42) if len(df_vuelo) > 10000 else df_vuelo
-                mapa = crear_mapa_plotly_satelite(
-                    df_sample, indice, radio_puntos, 
-                    f"{indice.upper()} - {fecha}", gdf_poligonos,
-                    center_lat=center_lat, center_lon=center_lon, zoom=zoom_comun
-                )
-                if mapa:
-                    # Usar uirevision para mantener sincronización
-                    mapa.update_layout(uirevision='mapas_sincronizados')
-                    st.plotly_chart(mapa, use_container_width=True, key=f"mapa_{i}")
+            # Filtrar zonas por fecha
+            gdf_zm1 = gdf_zonas_manejo[(gdf_zonas_manejo['indice'] == indice) & 
+                                       (gdf_zonas_manejo['fecha_vuelo'].astype(str) == fecha1)]
+            gdf_zm2 = gdf_zonas_manejo[(gdf_zonas_manejo['indice'] == indice) & 
+                                       (gdf_zonas_manejo['fecha_vuelo'].astype(str) == fecha2)]
+            
+            # Métricas de zonas de manejo
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**📊 Métricas Zonas - {fecha1}**")
+                mostrar_metricas_zonas_manejo(gdf_zonas_manejo, indice, fecha1)
+            with col2:
+                st.markdown(f"**📊 Métricas Zonas - {fecha2}**")
+                mostrar_metricas_zonas_manejo(gdf_zonas_manejo, indice, fecha2)
+            
+            st.markdown("---")
+            
+            # Mapas de zonas de manejo
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**🗺️ Zonas de Manejo - {fecha1}**")
+                if len(gdf_zm1) > 0:
+                    mapa_zm1 = crear_mapa_zonas_manejo(gdf_zm1, indice, f"Zonas - {fecha1}")
+                    if mapa_zm1:
+                        st.plotly_chart(mapa_zm1, use_container_width=True, key="mapa_zm1")
                 else:
-                    st.warning(f"No hay datos para mostrar en el mapa del vuelo {fecha}")
-        
-        st.markdown("---")
-        
-        # Gráficos de distribución
-        cols = st.columns(n_vuelos)
-        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
-            with cols[i]:
-                fig = crear_grafico_distribucion(df_vuelo, indice, f"Distribución - {fecha}")
-                if fig:
-                    fig.update_layout(height=350)
-                    st.plotly_chart(fig, use_container_width=True, key=f"dist_{i}")
+                    st.info("No hay zonas de manejo para este vuelo")
+            
+            with col2:
+                st.markdown(f"**🗺️ Zonas de Manejo - {fecha2}**")
+                if len(gdf_zm2) > 0:
+                    mapa_zm2 = crear_mapa_zonas_manejo(gdf_zm2, indice, f"Zonas - {fecha2}")
+                    if mapa_zm2:
+                        st.plotly_chart(mapa_zm2, use_container_width=True, key="mapa_zm2")
+                else:
+                    st.info("No hay zonas de manejo para este vuelo")
     
     else:
         mostrar_kpis(df, indice, info_superficie=info_sup)
@@ -1349,6 +1478,48 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
             if fig:
                 fig.update_layout(height=550)
                 st.plotly_chart(fig, use_container_width=True)
+        
+        # === SECCIÓN ZONAS DE MANEJO (Vista individual) ===
+        if gdf_zonas_manejo is not None and len(gdf_zonas_manejo) > 0:
+            st.markdown("---")
+            st.subheader("📍 Zonas de Manejo")
+            mostrar_explicacion_zonas_manejo()
+            
+            # Filtrar zonas por índice
+            gdf_zm_filtrado = gdf_zonas_manejo[gdf_zonas_manejo['indice'] == indice].copy()
+            
+            # Si hay fecha seleccionada, filtrar
+            if fechas_sel != 'Todas' and 'fecha_vuelo' in gdf_zm_filtrado.columns:
+                gdf_zm_filtrado = gdf_zm_filtrado[gdf_zm_filtrado['fecha_vuelo'].astype(str) == fechas_sel]
+            
+            if len(gdf_zm_filtrado) > 0:
+                # Métricas de zonas
+                mostrar_metricas_zonas_manejo(gdf_zm_filtrado, indice)
+                
+                st.markdown("---")
+                
+                # Mapa de zonas de manejo
+                col1, col2 = st.columns([3, 2])
+                with col1:
+                    st.markdown(f"**🗺️ Mapa Zonas de Manejo - {indice.upper()}**")
+                    mapa_zm = crear_mapa_zonas_manejo(gdf_zm_filtrado, indice)
+                    if mapa_zm:
+                        st.plotly_chart(mapa_zm, use_container_width=True, key="mapa_zm_single")
+                
+                with col2:
+                    # Tabla resumen de zonas
+                    st.markdown("**📋 Distribución por Zona**")
+                    resumen_zonas = gdf_zm_filtrado.groupby('clase').agg({
+                        'area_ha': 'sum',
+                        'n_arboles': 'sum'
+                    }).reset_index()
+                    resumen_zonas['clase_nombre'] = resumen_zonas['clase'].map(NOMBRES_ZONAS_MANEJO)
+                    resumen_zonas['pct'] = (resumen_zonas['area_ha'] / resumen_zonas['area_ha'].sum() * 100).round(1)
+                    resumen_zonas = resumen_zonas[['clase_nombre', 'area_ha', 'pct', 'n_arboles']]
+                    resumen_zonas.columns = ['Zona', 'Área (ha)', '% Área', 'Árboles']
+                    st.dataframe(resumen_zonas, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"No hay zonas de manejo disponibles para {indice.upper()}")
     
     # Tabla resumen por cuartel con superficie
     if info_sup and gdf_poligonos is not None:
@@ -1469,7 +1640,7 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
 
 
 def tab_analisis(df, indice, fechas_sel):
-    """Tab Análisis (soporta hasta 3 vuelos)."""
+    """Tab Análisis."""
     
     mostrar_descripcion_indice(indice)
     
@@ -1477,49 +1648,51 @@ def tab_analisis(df, indice, fechas_sel):
     if 'fecha_vuelo' in df.columns:
         fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
-    n_vuelos = len(fechas_unicas)
-    mostrar_comparacion = n_vuelos >= 2
+    mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
     
     if mostrar_comparacion:
-        # Preparar datos para cada vuelo
-        dfs_vuelos = []
-        for fecha in fechas_unicas:
-            df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
-            dfs_vuelos.append(df_vuelo)
+        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
+        df1 = df[df['fecha_vuelo'].astype(str) == fecha1]
+        df2 = df[df['fecha_vuelo'].astype(str) == fecha2]
         
-        # Histogramas
         st.subheader("📊 Histogramas")
-        cols = st.columns(n_vuelos)
-        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
-            with cols[i]:
-                fig = crear_histograma(df_vuelo, indice, f"Histograma - {fecha}")
-                if fig:
-                    fig.update_layout(height=300)
-                    st.plotly_chart(fig, use_container_width=True, key=f"hist_{i}")
+        col1, col2 = st.columns(2)
+        with col1:
+            fig1 = crear_histograma(df1, indice, f"Histograma - {fecha1}")
+            if fig1:
+                st.plotly_chart(fig1, use_container_width=True)
+        with col2:
+            fig2 = crear_histograma(df2, indice, f"Histograma - {fecha2}")
+            if fig2:
+                st.plotly_chart(fig2, use_container_width=True)
         
         st.markdown("---")
         
-        # Boxplots por cuartel
         st.subheader("📦 Distribución por Cuartel")
-        cols = st.columns(n_vuelos)
-        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
-            with cols[i]:
-                fig = crear_boxplot(df_vuelo, indice, f"Por Cuartel - {fecha}")
-                if fig:
-                    fig.update_layout(height=350)
-                    st.plotly_chart(fig, use_container_width=True, key=f"box_{i}")
+        col1, col2 = st.columns(2)
+        with col1:
+            fig1 = crear_boxplot(df1, indice, f"Por Cuartel - {fecha1}")
+            if fig1:
+                st.plotly_chart(fig1, use_container_width=True)
+        with col2:
+            fig2 = crear_boxplot(df2, indice, f"Por Cuartel - {fecha2}")
+            if fig2:
+                st.plotly_chart(fig2, use_container_width=True)
         
         st.markdown("---")
         
-        # Estadísticas comparativas
         st.subheader("📈 Estadísticas Comparativas")
-        cols = st.columns(n_vuelos)
-        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
-            with cols[i]:
-                st.markdown(f"**{fecha}**")
-                if indice in df_vuelo.columns:
-                    stats = df_vuelo[indice].describe().round(3)
-                    st.dataframe(stats, use_container_width=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**{fecha1}**")
+            stats1 = df1[indice].describe().round(3)
+            st.dataframe(stats1)
+        
+        with col2:
+            st.markdown(f"**{fecha2}**")
+            stats2 = df2[indice].describe().round(3)
+            st.dataframe(stats2)
     
     else:
         col1, col2 = st.columns(2)
@@ -1718,7 +1891,7 @@ def tab_datos(df, indices_disponibles):
 def crear_sidebar(df):
     """Sidebar con filtros en cascada."""
     df_filtrado = df.copy()
-    fechas_sel = []
+    fechas_sel = 'Todas'
     
     with st.sidebar:
         # Logo
@@ -1727,51 +1900,28 @@ def crear_sidebar(df):
         st.markdown("---")
         st.header("🔍 Filtros")
         
-        # 0. Filtro de cultivo (NUEVO)
-        if 'cultivo' in df.columns:
-            cultivos = ['Todos'] + sorted(df['cultivo'].dropna().unique().tolist())
-            cultivo_sel = st.selectbox("🌱 Cultivo", cultivos)
-            if cultivo_sel != 'Todos':
-                df_filtrado = df_filtrado[df_filtrado['cultivo'] == cultivo_sel]
+        # 1. Filtro de fecha
+        if 'fecha_vuelo' in df.columns:
+            fechas = ['Todas'] + sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
+            fechas_sel = st.selectbox("📅 Fecha de Vuelo", fechas)
+            if fechas_sel != 'Todas':
+                df_filtrado = df_filtrado[df_filtrado['fecha_vuelo'].astype(str) == fechas_sel]
         
-        # 1. Filtro de fecha - MULTISELECT para seleccionar vuelos específicos
-        if 'fecha_vuelo' in df_filtrado.columns:
-            fechas_disponibles = sorted([str(f) for f in df_filtrado['fecha_vuelo'].dropna().unique()])
-            
-            # Opción para seleccionar modo
-            modo_fecha = st.radio(
-                "📅 Modo de visualización",
-                ["Comparar todos", "Seleccionar vuelos"],
-                horizontal=True,
-                label_visibility="collapsed"
-            )
-            
-            if modo_fecha == "Comparar todos":
-                fechas_sel = fechas_disponibles  # Todas las fechas
-                st.info(f"📅 Comparando {len(fechas_disponibles)} vuelos")
-            else:
-                fechas_sel = st.multiselect(
-                    "📅 Seleccionar Vuelos",
-                    fechas_disponibles,
-                    default=fechas_disponibles[:1] if fechas_disponibles else [],
-                    help="Selecciona 1 vuelo para ver individual, 2 o más para comparar"
-                )
-                if not fechas_sel:
-                    fechas_sel = fechas_disponibles  # Si no selecciona nada, mostrar todos
-                    st.warning("Selecciona al menos un vuelo")
-            
-            # Filtrar por fechas seleccionadas
-            if fechas_sel:
-                df_filtrado = df_filtrado[df_filtrado['fecha_vuelo'].astype(str).isin(fechas_sel)]
+        # 2. Filtro de especie (sobre datos filtrados por fecha)
+        if 'Especie' in df_filtrado.columns:
+            especies = ['Todas'] + sorted(df_filtrado['Especie'].dropna().unique().tolist())
+            especie_sel = st.selectbox("🌿 Especie", especies)
+            if especie_sel != 'Todas':
+                df_filtrado = df_filtrado[df_filtrado['Especie'] == especie_sel]
         
-        # 2. Filtro de variedad (directo, sin especie)
+        # 3. Filtro de variedad (sobre datos filtrados por especie)
         if 'Variedad' in df_filtrado.columns:
             variedades = ['Todas'] + sorted(df_filtrado['Variedad'].dropna().unique().tolist())
             variedad_sel = st.selectbox("🍒 Variedad", variedades)
             if variedad_sel != 'Todas':
                 df_filtrado = df_filtrado[df_filtrado['Variedad'] == variedad_sel]
         
-        # 3. Filtro de cuarteles (MULTISELECT sobre datos filtrados)
+        # 4. Filtro de cuarteles (MULTISELECT sobre datos filtrados)
         if 'Cuartel' in df_filtrado.columns:
             cuarteles_disponibles = sorted(df_filtrado['Cuartel'].dropna().unique().tolist())
             cuarteles_sel = st.multiselect(
@@ -1798,18 +1948,16 @@ def crear_sidebar(df):
         
         st.markdown("---")
         st.header("⚙️ Visualización")
-        radio_puntos = st.slider("Tamaño puntos", 1, 8, 1, 1)  # Default = 1
+        radio_puntos = st.slider("Tamaño puntos", 1, 8, 3, 1)
         
         st.markdown("---")
-        st.header("🎨 Leyenda (7 Clases)")
-        for clase in ORDEN_CLASES:
-            color = COLORES_CLASE.get(clase, '#999')
-            st.markdown(f'<span style="background-color:{color}; padding: 2px 10px; border-radius: 3px;">&nbsp;</span> {clase}', unsafe_allow_html=True)
+        st.header("🎨 Leyenda")
+        for clase, color in COLORES_CLASE.items():
+            if clase != 'Sin dato':
+                st.markdown(f'<span style="background-color:{color}; padding: 2px 10px; border-radius: 3px;">&nbsp;</span> {clase}', unsafe_allow_html=True)
         
         st.markdown("---")
         st.caption(f"📊 {len(df_filtrado):,} árboles filtrados")
-        if 'cultivo' in df_filtrado.columns:
-            st.caption(f"🌱 {df_filtrado['cultivo'].nunique()} cultivo(s)")
     
     return df_filtrado, indice_sel, radio_puntos, fechas_sel, indices
 
@@ -1834,6 +1982,11 @@ def main():
     if gdf_poligonos is not None:
         st.sidebar.success(f"✅ Polígonos cargados: {len(gdf_poligonos)} cuarteles")
     
+    # Cargar zonas de manejo
+    gdf_zonas_manejo = cargar_zonas_manejo(ZONAS_MANEJO_PATH)
+    if gdf_zonas_manejo is not None:
+        st.sidebar.success(f"✅ Zonas de manejo: {len(gdf_zonas_manejo)} zonas")
+    
     df_filtrado, indice_sel, radio_puntos, fechas_sel, indices_disponibles = crear_sidebar(df)
     
     if indice_sel is None:
@@ -1843,7 +1996,7 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen", "📈 Análisis", "📅 Comparación", "🔍 Datos"])
     
     with tab1:
-        tab_resumen(df_filtrado, indice_sel, fechas_sel, radio_puntos, gdf_poligonos)
+        tab_resumen(df_filtrado, indice_sel, fechas_sel, radio_puntos, gdf_poligonos, gdf_zonas_manejo)
     
     with tab2:
         tab_analisis(df_filtrado, indice_sel, fechas_sel)
@@ -1858,7 +2011,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v8.0 - 7 Clases</p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a></p>
     </div>
     """, unsafe_allow_html=True)
 
