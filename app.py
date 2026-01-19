@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v9.2 - Dashboard con Zonas de Manejo
+TEMAPEO VIEWER v9.3 - Dashboard con Zonas de Manejo
 - Simbología de 7 clases para puntos individuales
 - Zonas de Manejo (3 clases) para gestión operativa
 - Soporte para Cerezos y Kiwis
@@ -14,8 +14,14 @@ FIXES v9.2:
 - Filtros de cuartel/variedad ahora aplican también a zonas de manejo
 - Sincronización completa entre puntos y polígonos de zonas
 
+FIXES v9.3:
+- Filtro de cultivo aplicado a zonas de manejo
+- Tab Comparación mejorado con eje X categórico ordenado por fecha
+- Tab Comparación con análisis comparativo completo (métricas, tabla, evolución)
+- Tab Análisis muestra comparación de los 3 vuelos lado a lado
+
 Autor: TeMapeo SPA
-Versión: 9.2
+Versión: 9.3
 """
 
 import streamlit as st
@@ -838,15 +844,22 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
 # TAB RESUMEN CON ZONAS DE MANEJO
 # =============================================================================
 
-def filtrar_zonas_manejo(gdf_zonas, df_puntos_filtrado, fechas_sel=None):
+def filtrar_zonas_manejo(gdf_zonas, df_puntos_filtrado, fechas_sel=None, cultivo_sel=None):
     """
     Filtra las zonas de manejo según los mismos criterios aplicados a los puntos.
-    Esto asegura que ambas visualizaciones (puntos y zonas) muestren los mismos cuarteles/fechas.
+    Esto asegura que ambas visualizaciones (puntos y zonas) muestren los mismos cuarteles/fechas/cultivo.
     """
     if gdf_zonas is None or len(gdf_zonas) == 0:
         return None
     
     gdf_filtrado = gdf_zonas.copy()
+    
+    # Filtrar por cultivo si está disponible
+    if cultivo_sel and cultivo_sel != 'Todos':
+        if 'cultivo' in gdf_filtrado.columns:
+            gdf_filtrado = gdf_filtrado[gdf_filtrado['cultivo'] == cultivo_sel]
+        elif 'Cultivo' in gdf_filtrado.columns:
+            gdf_filtrado = gdf_filtrado[gdf_filtrado['Cultivo'] == cultivo_sel]
     
     # Filtrar por cuarteles presentes en los puntos filtrados
     if 'Cuartel' in df_puntos_filtrado.columns and 'cuartel' in gdf_filtrado.columns:
@@ -860,11 +873,11 @@ def filtrar_zonas_manejo(gdf_zonas, df_puntos_filtrado, fechas_sel=None):
     return gdf_filtrado if len(gdf_filtrado) > 0 else None
 
 
-def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zonas_manejo=None):
+def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zonas_manejo=None, cultivo_sel=None):
     """Tab Resumen con comparación lado a lado y zonas de manejo."""
     
     # Filtrar zonas de manejo según los mismos criterios que los puntos
-    gdf_zonas_filtrado = filtrar_zonas_manejo(gdf_zonas_manejo, df, fechas_sel)
+    gdf_zonas_filtrado = filtrar_zonas_manejo(gdf_zonas_manejo, df, fechas_sel, cultivo_sel)
     
     mostrar_descripcion_indice(indice)
     
@@ -1048,39 +1061,126 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
 # =============================================================================
 
 def tab_analisis(df, indice, fechas_sel):
-    """Tab Análisis."""
+    """Tab Análisis con comparación de múltiples vuelos."""
     mostrar_descripcion_indice(indice)
     
     if indice not in df.columns:
         st.warning("Índice no disponible")
         return
     
-    col1, col2 = st.columns(2)
+    # Verificar si hay múltiples vuelos
+    fechas_unicas = []
+    if 'fecha_vuelo' in df.columns:
+        fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
-    with col1:
-        st.subheader("📊 Histograma")
-        fig = px.histogram(df, x=indice, nbins=40, color_discrete_sequence=['#1a9641'])
-        media = df[indice].mean()
-        fig.add_vline(x=media, line_dash="dash", line_color="red", annotation_text=f"μ={media:.3f}")
-        fig.update_layout(height=350)
+    n_vuelos = len(fechas_unicas)
+    mostrar_comparacion = n_vuelos >= 2
+    
+    if mostrar_comparacion:
+        # === HISTOGRAMAS COMPARATIVOS ===
+        st.subheader("📊 Histogramas por Vuelo")
+        
+        cols = st.columns(n_vuelos)
+        for i, fecha in enumerate(fechas_unicas):
+            df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
+            with cols[i]:
+                st.markdown(f"**{fecha}**")
+                fig = px.histogram(df_vuelo, x=indice, nbins=40, color_discrete_sequence=['#1a9641'])
+                media = df_vuelo[indice].mean()
+                fig.add_vline(x=media, line_dash="dash", line_color="red", annotation_text=f"μ={media:.3f}")
+                fig.update_layout(height=300, margin=dict(l=40, r=20, t=30, b=40))
+                st.plotly_chart(fig, use_container_width=True, key=f"hist_{i}")
+        
+        st.markdown("---")
+        
+        # === BOXPLOTS POR CUARTEL Y VUELO ===
+        st.subheader("📦 Distribución por Cuartel")
+        
+        if 'Cuartel' in df.columns:
+            cols = st.columns(n_vuelos)
+            for i, fecha in enumerate(fechas_unicas):
+                df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
+                with cols[i]:
+                    st.markdown(f"**{fecha}**")
+                    fig = px.box(df_vuelo, x='Cuartel', y=indice, color='Cuartel')
+                    fig.update_layout(height=350, showlegend=False, margin=dict(l=40, r=20, t=30, b=60))
+                    st.plotly_chart(fig, use_container_width=True, key=f"box_{i}")
+        
+        st.markdown("---")
+        
+        # === ESTADÍSTICAS DESCRIPTIVAS POR VUELO ===
+        st.subheader("📈 Estadísticas Descriptivas por Vuelo")
+        
+        stats_list = []
+        for fecha in fechas_unicas:
+            df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
+            if len(df_vuelo) > 0 and indice in df_vuelo.columns:
+                stats = df_vuelo[indice].describe()
+                stats_dict = {
+                    'Fecha': fecha,
+                    'N': int(stats['count']),
+                    'Media': round(stats['mean'], 3),
+                    'Std': round(stats['std'], 3),
+                    'Min': round(stats['min'], 3),
+                    '25%': round(stats['25%'], 3),
+                    '50%': round(stats['50%'], 3),
+                    '75%': round(stats['75%'], 3),
+                    'Max': round(stats['max'], 3)
+                }
+                stats_list.append(stats_dict)
+        
+        if stats_list:
+            df_stats = pd.DataFrame(stats_list)
+            st.dataframe(df_stats, use_container_width=True, hide_index=True)
+        
+        # === BOXPLOT COMPARATIVO GENERAL ===
+        st.markdown("---")
+        st.subheader("📊 Comparación General entre Vuelos")
+        
+        df_plot = df.copy()
+        df_plot['fecha_str'] = df_plot['fecha_vuelo'].astype(str)
+        
+        fig = px.box(df_plot, x='fecha_str', y=indice, color='fecha_str',
+                     labels={'fecha_str': 'Fecha de Vuelo', indice: indice.upper()})
+        fig.update_layout(
+            height=400, 
+            showlegend=False,
+            xaxis=dict(
+                type='category',
+                categoryorder='array',
+                categoryarray=sorted(fechas_unicas)
+            )
+        )
         st.plotly_chart(fig, use_container_width=True)
     
-    with col2:
-        st.subheader("📦 Por Cuartel")
-        if 'Cuartel' in df.columns:
-            fig = px.box(df, x='Cuartel', y=indice, color='Cuartel')
-            fig.update_layout(height=350, showlegend=False)
+    else:
+        # Vista de un solo vuelo (comportamiento original)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📊 Histograma")
+            fig = px.histogram(df, x=indice, nbins=40, color_discrete_sequence=['#1a9641'])
+            media = df[indice].mean()
+            fig.add_vline(x=media, line_dash="dash", line_color="red", annotation_text=f"μ={media:.3f}")
+            fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
-    
-    st.markdown("---")
-    st.subheader("📈 Estadísticas Descriptivas")
-    if indice in df.columns:
-        stats = df[indice].describe().round(3)
-        st.dataframe(stats, use_container_width=True)
+        
+        with col2:
+            st.subheader("📦 Por Cuartel")
+            if 'Cuartel' in df.columns:
+                fig = px.box(df, x='Cuartel', y=indice, color='Cuartel')
+                fig.update_layout(height=350, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("📈 Estadísticas Descriptivas")
+        if indice in df.columns:
+            stats = df[indice].describe().round(3)
+            st.dataframe(stats, use_container_width=True)
 
 
 def tab_comparacion(df, indice):
-    """Tab Comparación."""
+    """Tab Comparación con análisis temporal mejorado."""
     if 'fecha_vuelo' not in df.columns:
         st.warning("No hay datos de múltiples vuelos")
         return
@@ -1098,21 +1198,129 @@ def tab_comparacion(df, indice):
     
     df_valid = df[df['fecha_vuelo'].notna()].copy()
     df_valid['clase_simple'] = df_valid[col_clase].apply(clasificar_punto)
+    df_valid['fecha_str'] = df_valid['fecha_vuelo'].astype(str)
     
-    pivot = df_valid.groupby(['fecha_vuelo', 'clase_simple']).size().unstack(fill_value=0)
+    # Crear pivot y ordenar por fecha
+    pivot = df_valid.groupby(['fecha_str', 'clase_simple']).size().unstack(fill_value=0)
     pivot_pct = pivot.div(pivot.sum(axis=1), axis=0) * 100
+    
+    # Ordenar índice por fecha
+    pivot_pct = pivot_pct.sort_index()
     
     fig = go.Figure()
     for clase in ORDEN_CLASES:
         if clase in pivot_pct.columns:
             fig.add_trace(go.Bar(
                 name=clase, 
-                x=[str(x) for x in pivot_pct.index], 
+                x=pivot_pct.index.tolist(),  # Usar lista de strings
                 y=pivot_pct[clase], 
                 marker_color=COLORES_CLASE.get(clase, '#999')
             ))
-    fig.update_layout(barmode='stack', height=400, xaxis_title="Fecha de Vuelo", yaxis_title="Porcentaje (%)")
+    
+    fig.update_layout(
+        barmode='stack', 
+        height=400, 
+        xaxis_title="Fecha de Vuelo",
+        yaxis_title="Porcentaje (%)",
+        xaxis=dict(
+            type='category',  # Forzar tipo categórico para fechas
+            categoryorder='array',
+            categoryarray=sorted(pivot_pct.index.tolist())  # Ordenar fechas
+        )
+    )
     st.plotly_chart(fig, use_container_width=True)
+    
+    # === ANÁLISIS COMPARATIVO ===
+    st.markdown("---")
+    st.subheader("📈 Análisis Comparativo por Vuelo")
+    
+    n_vuelos = len(fechas_unicas)
+    
+    # Estadísticas por vuelo
+    cols = st.columns(n_vuelos)
+    stats_vuelos = []
+    
+    for i, fecha in enumerate(fechas_unicas):
+        df_vuelo = df_valid[df_valid['fecha_str'] == fecha]
+        
+        if len(df_vuelo) > 0 and indice in df_vuelo.columns:
+            stats = {
+                'fecha': fecha,
+                'n_arboles': len(df_vuelo),
+                'media': df_vuelo[indice].mean(),
+                'std': df_vuelo[indice].std(),
+                'min': df_vuelo[indice].min(),
+                'max': df_vuelo[indice].max(),
+                'pct_sanos': calcular_pct_sanos(df_vuelo, indice)
+            }
+            stats_vuelos.append(stats)
+            
+            with cols[i]:
+                st.markdown(f"**📅 {fecha}**")
+                st.metric(f"{indice.upper()} μ", f"{stats['media']:.3f}")
+                st.metric("% Sanos", f"{stats['pct_sanos']:.1f}%")
+                st.metric("N° Árboles", f"{stats['n_arboles']:,}")
+    
+    # Tabla comparativa
+    if len(stats_vuelos) > 1:
+        st.markdown("---")
+        st.subheader("📋 Tabla Comparativa")
+        
+        df_stats = pd.DataFrame(stats_vuelos)
+        df_stats.columns = ['Fecha', 'N° Árboles', f'{indice.upper()} Media', 'Desv. Std', 'Mínimo', 'Máximo', '% Sanos']
+        df_stats[f'{indice.upper()} Media'] = df_stats[f'{indice.upper()} Media'].round(3)
+        df_stats['Desv. Std'] = df_stats['Desv. Std'].round(3)
+        df_stats['Mínimo'] = df_stats['Mínimo'].round(3)
+        df_stats['Máximo'] = df_stats['Máximo'].round(3)
+        df_stats['% Sanos'] = df_stats['% Sanos'].round(1)
+        
+        st.dataframe(df_stats, use_container_width=True, hide_index=True)
+        
+        # Gráfico de evolución temporal
+        st.markdown("---")
+        st.subheader("📈 Evolución Temporal")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Gráfico de media por fecha
+            fig_evol = go.Figure()
+            fig_evol.add_trace(go.Scatter(
+                x=df_stats['Fecha'],
+                y=df_stats[f'{indice.upper()} Media'],
+                mode='lines+markers',
+                name=f'{indice.upper()} Media',
+                line=dict(color='#1a9641', width=3),
+                marker=dict(size=10)
+            ))
+            fig_evol.update_layout(
+                title=f"Evolución {indice.upper()} Promedio",
+                xaxis_title="Fecha de Vuelo",
+                yaxis_title=f"{indice.upper()}",
+                height=300,
+                xaxis=dict(type='category')
+            )
+            st.plotly_chart(fig_evol, use_container_width=True)
+        
+        with col2:
+            # Gráfico de % sanos por fecha
+            fig_sanos = go.Figure()
+            fig_sanos.add_trace(go.Scatter(
+                x=df_stats['Fecha'],
+                y=df_stats['% Sanos'],
+                mode='lines+markers',
+                name='% Sanos',
+                line=dict(color='#2166ac', width=3),
+                marker=dict(size=10)
+            ))
+            fig_sanos.update_layout(
+                title="Evolución % Árboles Sanos",
+                xaxis_title="Fecha de Vuelo",
+                yaxis_title="% Sanos",
+                height=300,
+                xaxis=dict(type='category')
+            )
+            st.plotly_chart(fig_sanos, use_container_width=True)
 
 
 def tab_datos(df, indices_disponibles):
@@ -1157,6 +1365,7 @@ def crear_sidebar(df):
     """Sidebar con filtros en cascada."""
     df_filtrado = df.copy()
     fechas_sel = []
+    cultivo_sel = 'Todos'  # Valor por defecto
     
     with st.sidebar:
         mostrar_logo_sidebar()
@@ -1248,7 +1457,7 @@ def crear_sidebar(df):
         st.markdown("---")
         st.caption(f"📊 {len(df_filtrado):,} árboles filtrados")
     
-    return df_filtrado, indice_sel, radio_puntos, fechas_sel, indices
+    return df_filtrado, indice_sel, radio_puntos, fechas_sel, indices, cultivo_sel
 
 
 def main():
@@ -1271,7 +1480,7 @@ def main():
     if gdf_zonas_manejo is not None:
         st.sidebar.success(f"✅ Zonas manejo: {len(gdf_zonas_manejo)} zonas")
     
-    df_filtrado, indice_sel, radio_puntos, fechas_sel, indices_disponibles = crear_sidebar(df)
+    df_filtrado, indice_sel, radio_puntos, fechas_sel, indices_disponibles, cultivo_sel = crear_sidebar(df)
     
     if indice_sel is None:
         st.warning("No hay índices disponibles")
@@ -1280,7 +1489,7 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen", "📈 Análisis", "📅 Comparación", "🔍 Datos"])
     
     with tab1:
-        tab_resumen(df_filtrado, indice_sel, fechas_sel, radio_puntos, gdf_poligonos, gdf_zonas_manejo)
+        tab_resumen(df_filtrado, indice_sel, fechas_sel, radio_puntos, gdf_poligonos, gdf_zonas_manejo, cultivo_sel)
     
     with tab2:
         tab_analisis(df_filtrado, indice_sel, fechas_sel)
@@ -1295,7 +1504,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.2 - Zonas de Manejo (Filtros Sincronizados)</p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.3 - Análisis Comparativo Mejorado</p>
     </div>
     """, unsafe_allow_html=True)
 
