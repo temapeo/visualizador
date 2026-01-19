@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v9.3 - Dashboard con Zonas de Manejo
+TEMAPEO VIEWER v9.4 - Dashboard con Zonas de Manejo
 - Simbología de 7 clases para puntos individuales
 - Zonas de Manejo (3 clases) para gestión operativa
 - Soporte para Cerezos y Kiwis
 - Comparación temporal de hasta 3 vuelos
+- Análisis automático interpretativo
 
 FIXES v9.1:
 - Corregido visualización de polígonos de zonas de manejo
@@ -20,8 +21,15 @@ FIXES v9.3:
 - Tab Comparación con análisis comparativo completo (métricas, tabla, evolución)
 - Tab Análisis muestra comparación de los 3 vuelos lado a lado
 
+NEW v9.4:
+- Análisis automático interpretativo al final del tab Resumen
+- Diagnóstico del estado general del cultivo
+- Análisis de tendencias temporales entre vuelos
+- Recomendaciones agronómicas basadas en los datos
+- Evaluación de homogeneidad y zonas críticas
+
 Autor: TeMapeo SPA
-Versión: 9.3
+Versión: 9.4
 """
 
 import streamlit as st
@@ -678,6 +686,188 @@ def mostrar_metricas_zonas_manejo(gdf_zonas, indice, fecha=None):
                 st.metric(f"{nombre}", f"{area:.2f} ha", f"{pct:.1f}%")
 
 
+def generar_analisis_automatico(df, indice, fechas_sel, gdf_zonas_filtrado=None, cultivo_sel=None):
+    """
+    Genera un análisis automático interpretativo basado en los datos filtrados.
+    Incluye diagnóstico del estado actual, tendencias temporales y recomendaciones.
+    """
+    col_clase = f"{indice}_clase"
+    
+    # Obtener información del filtro activo
+    filtro_info = []
+    if cultivo_sel and cultivo_sel != 'Todos':
+        filtro_info.append(f"**Cultivo:** {cultivo_sel}")
+    if 'Cuartel' in df.columns:
+        cuarteles = df['Cuartel'].unique()
+        if len(cuarteles) <= 3:
+            filtro_info.append(f"**Cuarteles:** {', '.join(cuarteles)}")
+        else:
+            filtro_info.append(f"**Cuarteles:** {len(cuarteles)} seleccionados")
+    if 'Variedad' in df.columns:
+        variedades = df['Variedad'].unique()
+        if len(variedades) == 1:
+            filtro_info.append(f"**Variedad:** {variedades[0]}")
+    
+    # Calcular métricas generales
+    n_arboles = len(df)
+    media_indice = df[indice].mean() if indice in df.columns else 0
+    std_indice = df[indice].std() if indice in df.columns else 0
+    pct_sanos = calcular_pct_sanos(df, indice)
+    
+    # Clasificar distribución
+    if col_clase in df.columns:
+        df_temp = df.copy()
+        df_temp['clase_simple'] = df_temp[col_clase].apply(clasificar_punto)
+        distribucion = df_temp['clase_simple'].value_counts(normalize=True) * 100
+        
+        pct_critico = distribucion.get('Muy bajo', 0) + distribucion.get('Bajo', 0)
+        pct_medio = distribucion.get('Medio-bajo', 0) + distribucion.get('Medio', 0)
+        pct_optimo = distribucion.get('Medio-alto', 0) + distribucion.get('Alto', 0) + distribucion.get('Muy alto', 0)
+    else:
+        pct_critico = pct_medio = pct_optimo = 0
+    
+    # === GENERAR DIAGNÓSTICO ===
+    diagnostico = []
+    recomendaciones = []
+    
+    # Evaluar estado general
+    if pct_sanos >= 80:
+        estado_general = "🟢 **EXCELENTE**"
+        diagnostico.append(f"El {pct_sanos:.1f}% de los árboles presenta condiciones óptimas de vigor vegetativo.")
+    elif pct_sanos >= 60:
+        estado_general = "🟡 **BUENO**"
+        diagnostico.append(f"El {pct_sanos:.1f}% de los árboles muestra buen estado, pero hay margen de mejora.")
+    elif pct_sanos >= 40:
+        estado_general = "🟠 **REGULAR**"
+        diagnostico.append(f"Solo el {pct_sanos:.1f}% de los árboles está en condiciones óptimas. Se requiere atención.")
+    else:
+        estado_general = "🔴 **CRÍTICO**"
+        diagnostico.append(f"Apenas el {pct_sanos:.1f}% de los árboles presenta buen estado. Intervención urgente requerida.")
+    
+    # Evaluar homogeneidad
+    cv = (std_indice / media_indice * 100) if media_indice > 0 else 0
+    if cv < 10:
+        diagnostico.append(f"Alta homogeneidad en el cultivo (CV={cv:.1f}%), indicando manejo uniforme.")
+    elif cv < 20:
+        diagnostico.append(f"Variabilidad moderada (CV={cv:.1f}%), normal para cultivos frutales.")
+    else:
+        diagnostico.append(f"Alta variabilidad espacial (CV={cv:.1f}%), sugiere condiciones heterogéneas o estrés localizado.")
+        recomendaciones.append("Investigar causas de variabilidad: riego, suelo, plagas o enfermedades focalizadas.")
+    
+    # Evaluar zonas críticas
+    if pct_critico > 20:
+        diagnostico.append(f"⚠️ {pct_critico:.1f}% del área presenta valores críticos (clases Muy bajo y Bajo).")
+        recomendaciones.append("Priorizar inspección de zonas rojas para identificar causas del estrés.")
+    
+    # === ANÁLISIS TEMPORAL (si hay múltiples vuelos) ===
+    tendencia_texto = ""
+    if 'fecha_vuelo' in df.columns:
+        fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
+        
+        if len(fechas_unicas) >= 2:
+            # Calcular tendencia
+            medias_por_fecha = []
+            pct_sanos_por_fecha = []
+            
+            for fecha in fechas_unicas:
+                df_fecha = df[df['fecha_vuelo'].astype(str) == fecha]
+                if len(df_fecha) > 0:
+                    medias_por_fecha.append(df_fecha[indice].mean())
+                    pct_sanos_por_fecha.append(calcular_pct_sanos(df_fecha, indice))
+            
+            if len(medias_por_fecha) >= 2:
+                cambio_media = medias_por_fecha[-1] - medias_por_fecha[0]
+                cambio_pct_sanos = pct_sanos_por_fecha[-1] - pct_sanos_por_fecha[0]
+                
+                if cambio_media > 0.02:
+                    tendencia_texto = f"📈 **Tendencia positiva:** El {indice.upper()} promedio aumentó de {medias_por_fecha[0]:.3f} a {medias_por_fecha[-1]:.3f} (+{cambio_media:.3f})."
+                    if cambio_pct_sanos > 5:
+                        tendencia_texto += f" El porcentaje de árboles sanos mejoró en {cambio_pct_sanos:.1f} puntos porcentuales."
+                elif cambio_media < -0.02:
+                    tendencia_texto = f"📉 **Tendencia negativa:** El {indice.upper()} promedio disminuyó de {medias_por_fecha[0]:.3f} a {medias_por_fecha[-1]:.3f} ({cambio_media:.3f})."
+                    recomendaciones.append("Investigar causas del deterioro: estrés hídrico, nutricional o sanitario.")
+                else:
+                    tendencia_texto = f"➡️ **Tendencia estable:** El {indice.upper()} se mantiene relativamente constante entre vuelos ({medias_por_fecha[0]:.3f} → {medias_por_fecha[-1]:.3f})."
+    
+    # === ANÁLISIS DE ZONAS DE MANEJO ===
+    zonas_texto = ""
+    if gdf_zonas_filtrado is not None and len(gdf_zonas_filtrado) > 0:
+        gdf_indice = gdf_zonas_filtrado[gdf_zonas_filtrado['indice'] == indice]
+        if len(gdf_indice) > 0:
+            resumen_zonas = gdf_indice.groupby('clase').agg({'area_ha': 'sum'}).reset_index()
+            total_ha = resumen_zonas['area_ha'].sum()
+            
+            for _, row in resumen_zonas.iterrows():
+                clase = row['clase']
+                area = row['area_ha']
+                pct = (area / total_ha * 100) if total_ha > 0 else 0
+                
+                if clase == 1 and pct > 15:  # Zona Baja > 15%
+                    zonas_texto += f"🔴 **{pct:.1f}% del área ({area:.2f} ha)** requiere intervención prioritaria. "
+                    recomendaciones.append(f"Aplicar manejo diferenciado en {area:.2f} ha de zona crítica.")
+                elif clase == 3 and pct > 60:  # Zona Alta > 60%
+                    zonas_texto += f"🟢 **{pct:.1f}% del área ({area:.2f} ha)** en óptimas condiciones. "
+    
+    # === RECOMENDACIONES ESPECÍFICAS POR ÍNDICE ===
+    if indice == 'ndvi':
+        if media_indice < 0.5:
+            recomendaciones.append("NDVI bajo sugiere estrés general. Verificar riego y estado nutricional.")
+    elif indice == 'ndre':
+        if media_indice < 0.35:
+            recomendaciones.append("NDRE bajo indica posible deficiencia de clorofila. Evaluar fertilización nitrogenada.")
+    elif indice == 'lci':
+        if media_indice < 0.5:
+            recomendaciones.append("LCI bajo sugiere contenido de clorofila subóptimo. Considerar aplicación foliar.")
+    
+    # === CONSTRUIR REPORTE ===
+    reporte = f"""
+### 🔬 Análisis Automático de Resultados
+
+"""
+    
+    if filtro_info:
+        reporte += "**Filtros activos:** " + " | ".join(filtro_info) + "\n\n"
+    
+    reporte += f"""---
+
+#### 📊 Estado General: {estado_general}
+
+| Métrica | Valor |
+|---------|-------|
+| Total de árboles | {n_arboles:,} |
+| {indice.upper()} promedio | {media_indice:.3f} |
+| Desviación estándar | {std_indice:.3f} |
+| Coef. variación | {cv:.1f}% |
+| Árboles sanos (≥Medio-alto) | {pct_sanos:.1f}% |
+
+---
+
+#### 🩺 Diagnóstico
+
+"""
+    for d in diagnostico:
+        reporte += f"- {d}\n"
+    
+    if tendencia_texto:
+        reporte += f"\n---\n\n#### 📈 Evolución Temporal\n\n{tendencia_texto}\n"
+    
+    if zonas_texto:
+        reporte += f"\n---\n\n#### 📍 Zonificación\n\n{zonas_texto}\n"
+    
+    if recomendaciones:
+        reporte += f"\n---\n\n#### 💡 Recomendaciones\n\n"
+        for i, r in enumerate(recomendaciones, 1):
+            reporte += f"{i}. {r}\n"
+    
+    reporte += f"""
+---
+
+<small>*Análisis generado automáticamente por TeMapeo Viewer v9.4 basado en {n_arboles:,} observaciones.*</small>
+"""
+    
+    return reporte
+
+
 def mostrar_explicacion_zonas_manejo():
     """Muestra explicación de qué son las zonas de manejo."""
     st.info("""
@@ -1001,6 +1191,11 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
                     if fig:
                         fig.update_layout(height=300)
                         st.plotly_chart(fig, use_container_width=True, key=f"graf_zm_{i}")
+        
+        # === ANÁLISIS AUTOMÁTICO AL FINAL (modo comparación) ===
+        st.markdown("---")
+        analisis = generar_analisis_automatico(df, indice, fechas_sel, gdf_zonas_filtrado, cultivo_sel)
+        st.markdown(analisis, unsafe_allow_html=True)
     
     else:
         # Vista de un solo vuelo
@@ -1054,6 +1249,11 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
                         st.plotly_chart(fig_zm, use_container_width=True)
             else:
                 st.info(f"No hay zonas de manejo disponibles para {indice.upper()} con los filtros seleccionados")
+    
+    # === ANÁLISIS AUTOMÁTICO AL FINAL ===
+    st.markdown("---")
+    analisis = generar_analisis_automatico(df, indice, fechas_sel, gdf_zonas_filtrado, cultivo_sel)
+    st.markdown(analisis, unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -1504,7 +1704,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.3 - Análisis Comparativo Mejorado</p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.4 - Análisis Automático Interpretativo</p>
     </div>
     """, unsafe_allow_html=True)
 
