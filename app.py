@@ -873,6 +873,14 @@ def generar_analisis_automatico(df, indice, fechas_sel, gdf_zonas_filtrado=None,
 
 #### 📊 Estado General: {estado_general}
 
+<div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; margin: 10px 0;">
+<strong>Leyenda de Estados:</strong><br>
+<span style="display: inline-block; margin: 3px 10px;">🟢 <strong>EXCELENTE</strong> (≥80% sanos)</span>
+<span style="display: inline-block; margin: 3px 10px;">🟡 <strong>BUENO</strong> (60-79%)</span>
+<span style="display: inline-block; margin: 3px 10px;">🟠 <strong>REGULAR</strong> (40-59%)</span>
+<span style="display: inline-block; margin: 3px 10px;">🔴 <strong>CRÍTICO</strong> (<40%)</span>
+</div>
+
 | Métrica | Valor |
 |---------|-------|
 | Total de árboles | {n_arboles:,} |
