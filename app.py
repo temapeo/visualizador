@@ -1,35 +1,21 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v9.4 - Dashboard con Zonas de Manejo
+TEMAPEO VIEWER v9.5 - Dashboard con Zonas de Manejo
 - Simbología de 7 clases para puntos individuales
 - Zonas de Manejo (3 clases) para gestión operativa
 - Soporte para Cerezos y Kiwis
 - Comparación temporal de hasta 3 vuelos
 - Análisis automático interpretativo
+- Logo cliente personalizable
 
-FIXES v9.1:
-- Corregido visualización de polígonos de zonas de manejo
-- Mejoradas etiquetas de gráficos con % y superficie
-
-FIXES v9.2:
-- Filtros de cuartel/variedad ahora aplican también a zonas de manejo
-- Sincronización completa entre puntos y polígonos de zonas
-
-FIXES v9.3:
-- Filtro de cultivo aplicado a zonas de manejo
-- Tab Comparación mejorado con eje X categórico ordenado por fecha
-- Tab Comparación con análisis comparativo completo (métricas, tabla, evolución)
-- Tab Análisis muestra comparación de los 3 vuelos lado a lado
-
-NEW v9.4:
-- Análisis automático interpretativo al final del tab Resumen
-- Diagnóstico del estado general del cultivo
-- Análisis de tendencias temporales entre vuelos
-- Recomendaciones agronómicas basadas en los datos
-- Evaluación de homogeneidad y zonas críticas
+FIXES v9.5:
+- Orden de renderizado de zonas corregido (Alta→Media→Baja)
+- Las zonas críticas (Baja/roja) se dibujan último para quedar visibles
+- Opacidad diferenciada por clase para mejor visualización
+- Líneas de borde más finas para reducir traslape visual
 
 Autor: TeMapeo SPA
-Versión: 9.4
+Versión: 9.5
 """
 
 import streamlit as st
@@ -516,6 +502,7 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
     """
     Crea mapa de zonas de manejo con polígonos coloreados.
     FIX v9.1: Uso de Choroplethmapbox para mejor renderizado de polígonos.
+    FIX v9.5: Orden de renderizado corregido (Baja primero, Alta último) y mejor transparencia.
     """
     if gdf_zonas is None or len(gdf_zonas) == 0:
         return None
@@ -530,8 +517,9 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
     # Obtener rangos para el índice
     rangos = RANGOS_ZONAS_MANEJO.get(indice, {})
     
-    # Agregar polígonos por clase - FIX: Iterar correctamente y usar fill='toself'
-    for clase in [1, 2, 3]:
+    # IMPORTANTE: Dibujar en orden inverso (3, 2, 1) para que las zonas bajas queden arriba
+    # Esto asegura que las zonas críticas (rojas) sean siempre visibles
+    for clase in [3, 2, 1]:  # Alta, Media, Baja - las bajas se dibujan último (quedan arriba)
         gdf_clase = gdf_filtrado[gdf_filtrado['clase'] == clase]
         if len(gdf_clase) == 0:
             continue
@@ -541,10 +529,18 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
         
         if clase == 1: 
             rango_texto = rangos.get('baja', '')
+            opacity = 0.75  # Más opaco para zonas críticas
         elif clase == 2: 
             rango_texto = rangos.get('media', '')
+            opacity = 0.65
         else: 
             rango_texto = rangos.get('alta', '')
+            opacity = 0.55  # Menos opaco para zonas buenas (fondo)
+        
+        # Convertir color hex a RGB
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
         
         # Procesar cada polígono de esta clase
         for idx, row in gdf_clase.iterrows():
@@ -589,8 +585,8 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
                         lat=lats,
                         mode='lines',
                         fill='toself',
-                        fillcolor=f'rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.6)',
-                        line=dict(width=2, color=color),
+                        fillcolor=f'rgba({r}, {g}, {b}, {opacity})',
+                        line=dict(width=1.5, color=color),
                         name=nombre_clase,
                         hoverinfo='text',
                         hovertext=hover_text,
@@ -601,8 +597,8 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
                     # Si falla un polígono, continuar con el siguiente
                     continue
     
-    # Agregar leyenda (trazos invisibles solo para mostrar leyenda)
-    for clase in [1, 2, 3]:
+    # Agregar leyenda (trazos invisibles solo para mostrar leyenda) - en orden correcto
+    for clase in [1, 2, 3]:  # Baja, Media, Alta para la leyenda
         color = COLORES_ZONAS_MANEJO.get(clase, '#888888')
         nombre_clase = NOMBRES_ZONAS_MANEJO.get(clase, f'Clase {clase}')
         
@@ -1715,7 +1711,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.4 - Análisis Automático Interpretativo</p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.5</p>
     </div>
     """, unsafe_allow_html=True)
 
