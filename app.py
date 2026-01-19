@@ -282,16 +282,39 @@ def mostrar_logo_header():
 
 @st.cache_data
 def cargar_datos(ruta_gpkg):
-    """Carga datos del GPKG."""
+    """Carga datos del GPKG y extrae coordenadas de la geometría."""
     try:
         gdf = gpd.read_file(ruta_gpkg)
-        if gdf.crs.to_epsg() != 4326:
+        if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs(epsg=4326)
-        gdf['lon'] = gdf.geometry.x
-        gdf['lat'] = gdf.geometry.y
-        return pd.DataFrame(gdf.drop(columns='geometry'))
+        
+        # SIEMPRE extraer coordenadas de la geometría (más confiable que columnas lat/lon)
+        if 'geometry' in gdf.columns and gdf.geometry is not None:
+            gdf['lon'] = gdf.geometry.x
+            gdf['lat'] = gdf.geometry.y
+        
+        # Si aún hay NaN, intentar desde column_geografic
+        if 'column_geografic' in gdf.columns:
+            mask_sin_coords = gdf['lat'].isna() | gdf['lon'].isna()
+            if mask_sin_coords.any():
+                def extraer_coords(coord_str):
+                    if pd.isna(coord_str) or coord_str == '':
+                        return None, None
+                    try:
+                        partes = str(coord_str).split(',')
+                        if len(partes) >= 2:
+                            return float(partes[0].strip()), float(partes[1].strip())
+                    except:
+                        pass
+                    return None, None
+                
+                coords = gdf.loc[mask_sin_coords, 'column_geografic'].apply(extraer_coords)
+                gdf.loc[mask_sin_coords, 'lat'] = coords.apply(lambda x: x[0])
+                gdf.loc[mask_sin_coords, 'lon'] = coords.apply(lambda x: x[1])
+        
+        return pd.DataFrame(gdf.drop(columns='geometry', errors='ignore'))
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error cargando datos: {e}")
         return None
 
 
