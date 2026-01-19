@@ -687,6 +687,11 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
         if len(df_clase) == 0:
             continue
         
+        # Filtrar puntos sin coordenadas válidas
+        df_clase = df_clase[df_clase['lat'].notna() & df_clase['lon'].notna()]
+        if len(df_clase) == 0:
+            continue
+        
         color = COLORES_CLASE.get(clase, '#969696')
         
         fig.add_trace(go.Scattermapbox(
@@ -694,9 +699,9 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
             lat=df_clase['lat'],
             mode='markers',
             marker=dict(
-                size=radio_puntos * 3,
+                size=radio_puntos * 4,  # Aumentado de 3 a 4
                 color=color,
-                opacity=0.8
+                opacity=0.9
             ),
             name=clase,
             hoverinfo='text',
@@ -859,6 +864,11 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
         if len(df_clase) == 0:
             continue
         
+        # Filtrar puntos sin coordenadas válidas
+        df_clase = df_clase[df_clase['lat'].notna() & df_clase['lon'].notna()]
+        if len(df_clase) == 0:
+            continue
+        
         color = COLORES_CLASE.get(clase, '#969696')
         
         fig.add_trace(go.Scattermapbox(
@@ -866,9 +876,9 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
             lat=df_clase['lat'],
             mode='markers',
             marker=dict(
-                size=radio_puntos * 3,
+                size=radio_puntos * 4,  # Aumentado de 3 a 4
                 color=color,
-                opacity=0.85
+                opacity=0.9
             ),
             name=clase,
             hoverinfo='text',
@@ -1098,7 +1108,7 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
 
 
 def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
-    """Tab Resumen con comparación lado a lado."""
+    """Tab Resumen con comparación lado a lado (soporta hasta 3 vuelos)."""
     
     # Mostrar descripción del índice
     mostrar_descripcion_indice(indice)
@@ -1108,60 +1118,54 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
         fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
     mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
+    n_vuelos = len(fechas_unicas)
     
     # Obtener info de superficie
     info_sup = obtener_info_superficie(df, gdf_poligonos)
     
     if mostrar_comparacion:
-        st.subheader("📊 Comparación de Vuelos")
+        st.subheader(f"📊 Comparación de {n_vuelos} Vuelos")
         
-        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
-        df1 = df[df['fecha_vuelo'].astype(str) == fecha1]
-        df2 = df[df['fecha_vuelo'].astype(str) == fecha2]
+        # Preparar datos para cada vuelo
+        dfs_vuelos = []
+        infos_sup = []
+        for fecha in fechas_unicas:
+            df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
+            dfs_vuelos.append(df_vuelo)
+            infos_sup.append(obtener_info_superficie(df_vuelo, gdf_poligonos))
         
-        # Info superficie para cada vuelo
-        info_sup1 = obtener_info_superficie(df1, gdf_poligonos)
-        info_sup2 = obtener_info_superficie(df2, gdf_poligonos)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"### 📅 Vuelo: {fecha1}")
-            mostrar_kpis(df1, indice, info_superficie=info_sup1)
-        with col2:
-            st.markdown(f"### 📅 Vuelo: {fecha2}")
-            mostrar_kpis(df2, indice, info_superficie=info_sup2)
-        
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"**🗺️ Mapa - {fecha1}**")
-            # Mostrar todos si hay menos de 10000, sino sampling a 8000
-            df1_sample = df1.sample(n=min(8000, len(df1)), random_state=42) if len(df1) > 10000 else df1
-            mapa1 = crear_mapa_plotly_satelite(df1_sample, indice, radio_puntos, f"{indice.upper()} - {fecha1}", gdf_poligonos)
-            if mapa1:
-                st.plotly_chart(mapa1, use_container_width=True, key="mapa1")
-        
-        with col2:
-            st.markdown(f"**🗺️ Mapa - {fecha2}**")
-            # Mostrar todos si hay menos de 10000, sino sampling a 8000
-            df2_sample = df2.sample(n=min(8000, len(df2)), random_state=42) if len(df2) > 10000 else df2
-            mapa2 = crear_mapa_plotly_satelite(df2_sample, indice, radio_puntos, f"{indice.upper()} - {fecha2}", gdf_poligonos)
-            if mapa2:
-                st.plotly_chart(mapa2, use_container_width=True, key="mapa2")
+        # KPIs - mostrar columnas según número de vuelos
+        cols = st.columns(n_vuelos)
+        for i, (fecha, df_vuelo, info_sup_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos, infos_sup)):
+            with cols[i]:
+                st.markdown(f"### 📅 Vuelo: {fecha}")
+                mostrar_kpis(df_vuelo, indice, info_superficie=info_sup_vuelo)
         
         st.markdown("---")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1 = crear_grafico_distribucion(df1, indice, f"Distribución - {fecha1}")
-            if fig1:
-                st.plotly_chart(fig1, use_container_width=True)
-        with col2:
-            fig2 = crear_grafico_distribucion(df2, indice, f"Distribución - {fecha2}")
-            if fig2:
-                st.plotly_chart(fig2, use_container_width=True)
+        # Mapas - mostrar columnas según número de vuelos
+        cols = st.columns(n_vuelos)
+        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
+            with cols[i]:
+                st.markdown(f"**🗺️ Mapa - {fecha}**")
+                # Sampling si hay muchos puntos
+                df_sample = df_vuelo.sample(n=min(8000, len(df_vuelo)), random_state=42) if len(df_vuelo) > 10000 else df_vuelo
+                mapa = crear_mapa_plotly_satelite(df_sample, indice, radio_puntos * 1.5, f"{indice.upper()} - {fecha}", gdf_poligonos)
+                if mapa:
+                    st.plotly_chart(mapa, use_container_width=True, key=f"mapa_{i}")
+                else:
+                    st.warning(f"No hay datos para mostrar en el mapa del vuelo {fecha}")
+        
+        st.markdown("---")
+        
+        # Gráficos de distribución
+        cols = st.columns(n_vuelos)
+        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
+            with cols[i]:
+                fig = crear_grafico_distribucion(df_vuelo, indice, f"Distribución - {fecha}")
+                if fig:
+                    fig.update_layout(height=350)
+                    st.plotly_chart(fig, use_container_width=True, key=f"dist_{i}")
     
     else:
         mostrar_kpis(df, indice, info_superficie=info_sup)
@@ -1320,7 +1324,7 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
 
 
 def tab_analisis(df, indice, fechas_sel):
-    """Tab Análisis."""
+    """Tab Análisis (soporta hasta 3 vuelos)."""
     
     mostrar_descripcion_indice(indice)
     
@@ -1329,50 +1333,48 @@ def tab_analisis(df, indice, fechas_sel):
         fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
     mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
+    n_vuelos = len(fechas_unicas)
     
     if mostrar_comparacion:
-        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
-        df1 = df[df['fecha_vuelo'].astype(str) == fecha1]
-        df2 = df[df['fecha_vuelo'].astype(str) == fecha2]
+        # Preparar datos para cada vuelo
+        dfs_vuelos = []
+        for fecha in fechas_unicas:
+            df_vuelo = df[df['fecha_vuelo'].astype(str) == fecha]
+            dfs_vuelos.append(df_vuelo)
         
+        # Histogramas
         st.subheader("📊 Histogramas")
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1 = crear_histograma(df1, indice, f"Histograma - {fecha1}")
-            if fig1:
-                st.plotly_chart(fig1, use_container_width=True)
-        with col2:
-            fig2 = crear_histograma(df2, indice, f"Histograma - {fecha2}")
-            if fig2:
-                st.plotly_chart(fig2, use_container_width=True)
+        cols = st.columns(n_vuelos)
+        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
+            with cols[i]:
+                fig = crear_histograma(df_vuelo, indice, f"Histograma - {fecha}")
+                if fig:
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True, key=f"hist_{i}")
         
         st.markdown("---")
         
+        # Boxplots por cuartel
         st.subheader("📦 Distribución por Cuartel")
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1 = crear_boxplot(df1, indice, f"Por Cuartel - {fecha1}")
-            if fig1:
-                st.plotly_chart(fig1, use_container_width=True)
-        with col2:
-            fig2 = crear_boxplot(df2, indice, f"Por Cuartel - {fecha2}")
-            if fig2:
-                st.plotly_chart(fig2, use_container_width=True)
+        cols = st.columns(n_vuelos)
+        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
+            with cols[i]:
+                fig = crear_boxplot(df_vuelo, indice, f"Por Cuartel - {fecha}")
+                if fig:
+                    fig.update_layout(height=350)
+                    st.plotly_chart(fig, use_container_width=True, key=f"box_{i}")
         
         st.markdown("---")
         
+        # Estadísticas comparativas
         st.subheader("📈 Estadísticas Comparativas")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"**{fecha1}**")
-            stats1 = df1[indice].describe().round(3)
-            st.dataframe(stats1)
-        
-        with col2:
-            st.markdown(f"**{fecha2}**")
-            stats2 = df2[indice].describe().round(3)
-            st.dataframe(stats2)
+        cols = st.columns(n_vuelos)
+        for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
+            with cols[i]:
+                st.markdown(f"**{fecha}**")
+                if indice in df_vuelo.columns:
+                    stats = df_vuelo[indice].describe().round(3)
+                    st.dataframe(stats, use_container_width=True)
     
     else:
         col1, col2 = st.columns(2)
