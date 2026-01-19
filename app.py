@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v9.1 - Dashboard con Zonas de Manejo
+TEMAPEO VIEWER v9.2 - Dashboard con Zonas de Manejo
 - Simbología de 7 clases para puntos individuales
 - Zonas de Manejo (3 clases) para gestión operativa
 - Soporte para Cerezos y Kiwis
@@ -10,8 +10,12 @@ FIXES v9.1:
 - Corregido visualización de polígonos de zonas de manejo
 - Mejoradas etiquetas de gráficos con % y superficie
 
+FIXES v9.2:
+- Filtros de cuartel/variedad ahora aplican también a zonas de manejo
+- Sincronización completa entre puntos y polígonos de zonas
+
 Autor: TeMapeo SPA
-Versión: 9.1
+Versión: 9.2
 """
 
 import streamlit as st
@@ -834,8 +838,33 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
 # TAB RESUMEN CON ZONAS DE MANEJO
 # =============================================================================
 
+def filtrar_zonas_manejo(gdf_zonas, df_puntos_filtrado, fechas_sel=None):
+    """
+    Filtra las zonas de manejo según los mismos criterios aplicados a los puntos.
+    Esto asegura que ambas visualizaciones (puntos y zonas) muestren los mismos cuarteles/fechas.
+    """
+    if gdf_zonas is None or len(gdf_zonas) == 0:
+        return None
+    
+    gdf_filtrado = gdf_zonas.copy()
+    
+    # Filtrar por cuarteles presentes en los puntos filtrados
+    if 'Cuartel' in df_puntos_filtrado.columns and 'cuartel' in gdf_filtrado.columns:
+        cuarteles_en_puntos = df_puntos_filtrado['Cuartel'].unique().tolist()
+        gdf_filtrado = gdf_filtrado[gdf_filtrado['cuartel'].isin(cuarteles_en_puntos)]
+    
+    # Filtrar por fechas seleccionadas
+    if fechas_sel and len(fechas_sel) > 0 and 'fecha_vuelo' in gdf_filtrado.columns:
+        gdf_filtrado = gdf_filtrado[gdf_filtrado['fecha_vuelo'].astype(str).isin(fechas_sel)]
+    
+    return gdf_filtrado if len(gdf_filtrado) > 0 else None
+
+
 def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zonas_manejo=None):
     """Tab Resumen con comparación lado a lado y zonas de manejo."""
+    
+    # Filtrar zonas de manejo según los mismos criterios que los puntos
+    gdf_zonas_filtrado = filtrar_zonas_manejo(gdf_zonas_manejo, df, fechas_sel)
     
     mostrar_descripcion_indice(indice)
     
@@ -916,7 +945,7 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
                     st.plotly_chart(fig, use_container_width=True, key=f"dist_{i}")
         
         # === SECCIÓN ZONAS DE MANEJO ===
-        if gdf_zonas_manejo is not None and len(gdf_zonas_manejo) > 0:
+        if gdf_zonas_filtrado is not None and len(gdf_zonas_filtrado) > 0:
             st.markdown("---")
             st.subheader("📍 Zonas de Manejo")
             mostrar_explicacion_zonas_manejo()
@@ -926,7 +955,7 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
             for i, fecha in enumerate(fechas_unicas):
                 with cols[i]:
                     st.markdown(f"**📊 Métricas - {fecha}**")
-                    mostrar_metricas_zonas_manejo(gdf_zonas_manejo, indice, fecha)
+                    mostrar_metricas_zonas_manejo(gdf_zonas_filtrado, indice, fecha)
             
             st.markdown("---")
             
@@ -935,25 +964,25 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
             for i, fecha in enumerate(fechas_unicas):
                 with cols[i]:
                     st.markdown(f"**🗺️ Zonas - {fecha}**")
-                    gdf_zm = gdf_zonas_manejo[
-                        (gdf_zonas_manejo['indice'] == indice) & 
-                        (gdf_zonas_manejo['fecha_vuelo'].astype(str) == fecha)
+                    gdf_zm = gdf_zonas_filtrado[
+                        (gdf_zonas_filtrado['indice'] == indice) & 
+                        (gdf_zonas_filtrado['fecha_vuelo'].astype(str) == fecha)
                     ]
                     if len(gdf_zm) > 0:
                         mapa_zm = crear_mapa_zonas_manejo(gdf_zm, indice, center_lat=center_lat, center_lon=center_lon, zoom=zoom_comun)
                         if mapa_zm:
                             st.plotly_chart(mapa_zm, use_container_width=True, key=f"mapa_zm_{i}")
                     else:
-                        st.info("No hay zonas para este vuelo")
+                        st.info("No hay zonas para este vuelo/cuartel")
             
             # Gráficos de zonas
             st.markdown("---")
             cols = st.columns(n_vuelos)
             for i, fecha in enumerate(fechas_unicas):
                 with cols[i]:
-                    gdf_zm = gdf_zonas_manejo[
-                        (gdf_zonas_manejo['indice'] == indice) & 
-                        (gdf_zonas_manejo['fecha_vuelo'].astype(str) == fecha)
+                    gdf_zm = gdf_zonas_filtrado[
+                        (gdf_zonas_filtrado['indice'] == indice) & 
+                        (gdf_zonas_filtrado['fecha_vuelo'].astype(str) == fecha)
                     ]
                     fig = crear_grafico_zonas_manejo(gdf_zm, indice, f"Zonas - {fecha}")
                     if fig:
@@ -982,12 +1011,12 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
                 st.plotly_chart(fig, use_container_width=True)
         
         # === SECCIÓN ZONAS DE MANEJO (Vista individual) ===
-        if gdf_zonas_manejo is not None and len(gdf_zonas_manejo) > 0:
+        if gdf_zonas_filtrado is not None and len(gdf_zonas_filtrado) > 0:
             st.markdown("---")
             st.subheader("📍 Zonas de Manejo")
             mostrar_explicacion_zonas_manejo()
             
-            gdf_zm_filtrado = gdf_zonas_manejo[gdf_zonas_manejo['indice'] == indice].copy()
+            gdf_zm_filtrado = gdf_zonas_filtrado[gdf_zonas_filtrado['indice'] == indice].copy()
             
             if fechas_sel and len(fechas_sel) == 1 and 'fecha_vuelo' in gdf_zm_filtrado.columns:
                 gdf_zm_filtrado = gdf_zm_filtrado[gdf_zm_filtrado['fecha_vuelo'].astype(str) == fechas_sel[0]]
@@ -1011,7 +1040,7 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
                         fig_zm.update_layout(height=500)
                         st.plotly_chart(fig_zm, use_container_width=True)
             else:
-                st.info(f"No hay zonas de manejo disponibles para {indice.upper()}")
+                st.info(f"No hay zonas de manejo disponibles para {indice.upper()} con los filtros seleccionados")
 
 
 # =============================================================================
@@ -1266,7 +1295,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.1 - Zonas de Manejo (Fix)</p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.2 - Zonas de Manejo (Filtros Sincronizados)</p>
     </div>
     """, unsafe_allow_html=True)
 
