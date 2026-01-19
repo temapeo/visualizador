@@ -363,7 +363,28 @@ def obtener_info_superficie(df_puntos, gdf_poligonos, cuarteles_filtrados=None):
 
 
 def asignar_color_hex(clase):
-    """Asigna color según clase (7 clases)."""
+    """Asigna color según clase (7 clases) - maneja valores numéricos y texto."""
+    if pd.isna(clase):
+        return COLORES_CLASE['Sin dato']
+    
+    # Intentar como número primero
+    try:
+        clase_num = int(float(clase))
+        mapeo_num = {
+            1: 'Muy bajo',
+            2: 'Bajo', 
+            3: 'Medio-bajo',
+            4: 'Medio',
+            5: 'Medio-alto',
+            6: 'Alto',
+            7: 'Muy alto'
+        }
+        clase_texto = mapeo_num.get(clase_num, 'Sin dato')
+        return COLORES_CLASE.get(clase_texto, COLORES_CLASE['Sin dato'])
+    except (ValueError, TypeError):
+        pass
+    
+    # Si es texto, clasificar por contenido
     clase_str = str(clase).lower()
     if 'muy bajo' in clase_str:
         return COLORES_CLASE['Muy bajo']
@@ -682,9 +703,30 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
                     showlegend=False
                 ))
     
-    # Agrupar puntos por clase para la leyenda
-    def clasificar_punto(clase_str):
-        clase_lower = str(clase_str).lower()
+    # Agrupar puntos por clase para la leyenda - manejar tanto valores numéricos como texto
+    def clasificar_punto(clase_valor):
+        # Si es numérico, mapear a etiqueta
+        if pd.isna(clase_valor):
+            return 'Sin dato'
+        
+        # Intentar como número primero
+        try:
+            clase_num = int(float(clase_valor))
+            mapeo_num = {
+                1: 'Muy bajo',
+                2: 'Bajo', 
+                3: 'Medio-bajo',
+                4: 'Medio',
+                5: 'Medio-alto',
+                6: 'Alto',
+                7: 'Muy alto'
+            }
+            return mapeo_num.get(clase_num, 'Sin dato')
+        except (ValueError, TypeError):
+            pass
+        
+        # Si es texto, clasificar por contenido
+        clase_lower = str(clase_valor).lower()
         if 'muy bajo' in clase_lower:
             return 'Muy bajo'
         elif 'medio-bajo' in clase_lower or 'medio bajo' in clase_lower:
@@ -859,9 +901,30 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
                     showlegend=False
                 ))
     
-    # Agrupar puntos por clase usando la misma lógica que asignar_color_hex
-    def clasificar_punto(clase_str):
-        clase_lower = str(clase_str).lower()
+    # Agrupar puntos por clase - manejar tanto valores numéricos como texto
+    def clasificar_punto(clase_valor):
+        # Si es numérico, mapear a etiqueta
+        if pd.isna(clase_valor):
+            return 'Sin dato'
+        
+        # Intentar como número primero
+        try:
+            clase_num = int(float(clase_valor))
+            mapeo_num = {
+                1: 'Muy bajo',
+                2: 'Bajo', 
+                3: 'Medio-bajo',
+                4: 'Medio',
+                5: 'Medio-alto',
+                6: 'Alto',
+                7: 'Muy alto'
+            }
+            return mapeo_num.get(clase_num, 'Sin dato')
+        except (ValueError, TypeError):
+            pass
+        
+        # Si es texto, clasificar por contenido
+        clase_lower = str(clase_valor).lower()
         if 'muy bajo' in clase_lower:
             return 'Muy bajo'
         elif 'medio-bajo' in clase_lower or 'medio bajo' in clase_lower:
