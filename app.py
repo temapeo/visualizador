@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v9 - Dashboard con Zonas de Manejo
+TEMAPEO VIEWER v9.1 - Dashboard con Zonas de Manejo
 - Simbología de 7 clases para puntos individuales
 - Zonas de Manejo (3 clases) para gestión operativa
 - Soporte para Cerezos y Kiwis
 - Comparación temporal de hasta 3 vuelos
 
+FIXES v9.1:
+- Corregido visualización de polígonos de zonas de manejo
+- Mejoradas etiquetas de gráficos con % y superficie
+
 Autor: TeMapeo SPA
-Versión: 9.0
+Versión: 9.1
 """
 
 import streamlit as st
@@ -474,7 +478,10 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
 
 
 def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, center_lon=None, zoom=None):
-    """Crea mapa de zonas de manejo con polígonos coloreados."""
+    """
+    Crea mapa de zonas de manejo con polígonos coloreados.
+    FIX v9.1: Uso de Choroplethmapbox para mejor renderizado de polígonos.
+    """
     if gdf_zonas is None or len(gdf_zonas) == 0:
         return None
     
@@ -485,7 +492,10 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
     
     fig = go.Figure()
     
-    # Agregar polígonos por clase
+    # Obtener rangos para el índice
+    rangos = RANGOS_ZONAS_MANEJO.get(indice, {})
+    
+    # Agregar polígonos por clase - FIX: Iterar correctamente y usar fill='toself'
     for clase in [1, 2, 3]:
         gdf_clase = gdf_filtrado[gdf_filtrado['clase'] == clase]
         if len(gdf_clase) == 0:
@@ -493,15 +503,22 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
         
         color = COLORES_ZONAS_MANEJO.get(clase, '#888888')
         nombre_clase = NOMBRES_ZONAS_MANEJO.get(clase, f'Clase {clase}')
-        rangos = RANGOS_ZONAS_MANEJO.get(indice, {})
         
-        if clase == 1: rango_texto = rangos.get('baja', '')
-        elif clase == 2: rango_texto = rangos.get('media', '')
-        else: rango_texto = rangos.get('alta', '')
+        if clase == 1: 
+            rango_texto = rangos.get('baja', '')
+        elif clase == 2: 
+            rango_texto = rangos.get('media', '')
+        else: 
+            rango_texto = rangos.get('alta', '')
         
-        for _, row in gdf_clase.iterrows():
+        # Procesar cada polígono de esta clase
+        for idx, row in gdf_clase.iterrows():
             geom = row.geometry
             
+            if geom is None or geom.is_empty:
+                continue
+            
+            # Obtener lista de polígonos (manejar Polygon y MultiPolygon)
             if geom.geom_type == 'Polygon':
                 polygons = [geom]
             elif geom.geom_type == 'MultiPolygon':
@@ -511,48 +528,59 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
             
             for poly in polygons:
                 try:
-                    coords = list(poly.exterior.coords)
-                    lons = [c[0] for c in coords]
-                    lats = [c[1] for c in coords]
+                    # Obtener coordenadas del exterior
+                    exterior_coords = list(poly.exterior.coords)
+                    lons = [c[0] for c in exterior_coords]
+                    lats = [c[1] for c in exterior_coords]
                     
+                    # Cerrar el polígono explícitamente
+                    if lons[0] != lons[-1] or lats[0] != lats[-1]:
+                        lons.append(lons[0])
+                        lats.append(lats[0])
+                    
+                    # Datos para hover
                     area_ha = row.get('area_ha', 0)
                     pct_area = row.get('pct_area', 0)
                     cuartel = row.get('cuartel', 'N/A')
                     
                     hover_text = (f"<b>Zona: {nombre_clase}</b><br>"
-                                 f"Rango: {rango_texto}<br>"
+                                 f"Rango {indice.upper()}: {rango_texto}<br>"
                                  f"Cuartel: {cuartel}<br>"
                                  f"Área: {area_ha:.2f} ha ({pct_area:.1f}%)")
                     
-                    # Color con transparencia
-                    color_fill = color + '99'  # Agregar alpha
-                    
+                    # Agregar polígono con fill
                     fig.add_trace(go.Scattermapbox(
-                        lon=lons, lat=lats,
+                        lon=lons,
+                        lat=lats,
                         mode='lines',
                         fill='toself',
-                        fillcolor=color_fill,
-                        line=dict(width=2, color='#333333'),
-                        name=f"{nombre_clase} ({rango_texto})",
+                        fillcolor=f'rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.6)',
+                        line=dict(width=2, color=color),
+                        name=nombre_clase,
                         hoverinfo='text',
                         hovertext=hover_text,
                         showlegend=False
                     ))
-                except:
+                    
+                except Exception as e:
+                    # Si falla un polígono, continuar con el siguiente
                     continue
     
-    # Agregar leyenda
+    # Agregar leyenda (trazos invisibles solo para mostrar leyenda)
     for clase in [1, 2, 3]:
         color = COLORES_ZONAS_MANEJO.get(clase, '#888888')
         nombre_clase = NOMBRES_ZONAS_MANEJO.get(clase, f'Clase {clase}')
-        rangos = RANGOS_ZONAS_MANEJO.get(indice, {})
         
-        if clase == 1: rango_texto = rangos.get('baja', '')
-        elif clase == 2: rango_texto = rangos.get('media', '')
-        else: rango_texto = rangos.get('alta', '')
+        if clase == 1: 
+            rango_texto = rangos.get('baja', '')
+        elif clase == 2: 
+            rango_texto = rangos.get('media', '')
+        else: 
+            rango_texto = rangos.get('alta', '')
         
         fig.add_trace(go.Scattermapbox(
-            lon=[None], lat=[None],
+            lon=[None], 
+            lat=[None],
             mode='markers',
             marker=dict(size=15, color=color),
             name=f"{nombre_clase} ({rango_texto})",
@@ -561,7 +589,7 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
     
     # Calcular centro y zoom
     if center_lat is None or center_lon is None:
-        all_bounds = gdf_filtrado.total_bounds
+        all_bounds = gdf_filtrado.total_bounds  # [minx, miny, maxx, maxy]
         center_lon = (all_bounds[0] + all_bounds[2]) / 2
         center_lat = (all_bounds[1] + all_bounds[3]) / 2
     
@@ -591,7 +619,14 @@ def crear_mapa_zonas_manejo(gdf_zonas, indice, titulo="", center_lat=None, cente
         ),
         margin=dict(l=0, r=0, t=0, b=0),
         height=500,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor="rgba(255,255,255,0.9)", font=dict(size=11))
+        legend=dict(
+            yanchor="top", 
+            y=0.99, 
+            xanchor="left", 
+            x=0.01, 
+            bgcolor="rgba(255,255,255,0.9)", 
+            font=dict(size=11)
+        )
     )
     
     return fig
@@ -700,7 +735,10 @@ def crear_grafico_distribucion(df, indice, titulo=""):
 
 
 def crear_grafico_zonas_manejo(gdf_zonas, indice, titulo=""):
-    """Gráfico de distribución de zonas de manejo por área."""
+    """
+    Gráfico de distribución de zonas de manejo por área.
+    FIX v9.1: Etiquetas muestran % y superficie (ha)
+    """
     if gdf_zonas is None or len(gdf_zonas) == 0:
         return None
     
@@ -715,20 +753,30 @@ def crear_grafico_zonas_manejo(gdf_zonas, indice, titulo=""):
     resumen['pct'] = (resumen['area_ha'] / resumen['area_ha'].sum() * 100).round(1)
     resumen = resumen.sort_values('clase')
     
+    # FIX: Crear etiqueta con % y superficie
+    resumen['etiqueta'] = resumen.apply(
+        lambda row: f"{row['pct']:.1f}%<br>{row['area_ha']:.2f} ha", 
+        axis=1
+    )
+    
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=resumen['nombre'],
         y=resumen['area_ha'],
         marker_color=resumen['color'],
-        text=resumen['pct'].apply(lambda x: f"{x}%"),
+        text=resumen['etiqueta'],
         textposition='outside',
-        textfont=dict(size=12)
+        textfont=dict(size=11)
     ))
+    
+    # Ajustar rango Y para que quepan las etiquetas
+    y_max = resumen['area_ha'].max() * 1.35
     
     fig.update_layout(
         title=dict(text=titulo or f"Zonas de Manejo - {indice.upper()}", font=dict(size=14)),
         xaxis_title="",
         yaxis_title="Superficie (ha)",
+        yaxis=dict(range=[0, y_max]),
         showlegend=False,
         height=350,
         margin=dict(l=50, r=30, t=50, b=60)
@@ -1218,7 +1266,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.0 - Zonas de Manejo</p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v9.1 - Zonas de Manejo (Fix)</p>
     </div>
     """, unsafe_allow_html=True)
 
