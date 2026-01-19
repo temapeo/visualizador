@@ -1191,11 +1191,6 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None, gdf_zo
                     if fig:
                         fig.update_layout(height=300)
                         st.plotly_chart(fig, use_container_width=True, key=f"graf_zm_{i}")
-        
-        # === ANÁLISIS AUTOMÁTICO AL FINAL (modo comparación) ===
-        st.markdown("---")
-        analisis = generar_analisis_automatico(df, indice, fechas_sel, gdf_zonas_filtrado, cultivo_sel)
-        st.markdown(analisis, unsafe_allow_html=True)
     
     else:
         # Vista de un solo vuelo
