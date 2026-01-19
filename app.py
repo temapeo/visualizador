@@ -188,24 +188,40 @@ def mostrar_logo_sidebar():
 
 def mostrar_logo_header():
     """Muestra el logo del cliente centrado y título estilizado."""
-    # Primero intentar logo del cliente, si no existe usar logo TeMapeo
-    logo_a_mostrar = None
-    if os.path.exists(LOGO_CLIENTE_PATH):
-        logo_a_mostrar = LOGO_CLIENTE_PATH
-    elif os.path.exists(LOGO_PATH):
-        logo_a_mostrar = LOGO_PATH
+    logo_mostrado = False
     
-    if logo_a_mostrar:
-        try:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.image(logo_a_mostrar, use_container_width=False, width=280)
-        except:
-            pass
+    # DEBUG: Ver qué archivos hay en datos/
+    # if os.path.exists('datos'):
+    #     st.caption(f"DEBUG - Archivos en datos/: {os.listdir('datos')}")
+    
+    # Lista de posibles rutas del logo del cliente (en orden de prioridad)
+    logos_posibles = [
+        'datos/abudycia_logo.jpeg',
+        'datos/abudycia_logo.jpg', 
+        'datos/abudycia_logo.png',
+        'datos/cliente_logo.jpeg',
+        'datos/cliente_logo.jpg',
+        'datos/cliente_logo.png',
+        LOGO_CLIENTE_PATH,
+        LOGO_PATH
+    ]
+    
+    # Buscar y mostrar el primer logo que exista
+    for logo_path in logos_posibles:
+        if os.path.exists(logo_path):
+            try:
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    st.image(logo_path, width=280)
+                logo_mostrado = True
+                break
+            except Exception as e:
+                st.error(f"Error cargando logo: {e}")
+                continue
     
     # Título centrado con estilo TeMapeo
     st.markdown(f"""
-    <h1 style="text-align: center; color: {COLOR_TEMAPEO}; font-weight: 800; font-size: 2.2rem; margin-top: 0.5rem; margin-bottom: 0.2rem;">
+    <h1 style="text-align: center; color: {COLOR_TEMAPEO}; font-weight: 800; font-size: 2.0rem; margin-top: 0.5rem; margin-bottom: 0.2rem;">
         Dashboard de Individualización de Árboles Frutales
     </h1>
     """, unsafe_allow_html=True)
