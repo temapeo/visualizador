@@ -1139,6 +1139,29 @@ def crear_boxplot(df, indice, titulo=""):
 # FUNCIONES DE TABS
 # =============================================================================
 
+def calcular_pct_sanos(df, indice):
+    """Calcula el porcentaje de árboles sanos (clases Alto, Muy alto, Medio-alto)."""
+    col_clase = f"{indice}_clase"
+    if col_clase not in df.columns or len(df) == 0:
+        return 0
+    
+    def es_sano(valor):
+        if pd.isna(valor):
+            return False
+        # Si es numérico: clases 5 (Medio-alto), 6 (Alto), 7 (Muy alto) son sanos
+        try:
+            clase_num = int(float(valor))
+            return clase_num >= 5  # 5, 6, 7 son sanos
+        except (ValueError, TypeError):
+            pass
+        # Si es texto
+        valor_lower = str(valor).lower()
+        return ('alto' in valor_lower and 'bajo' not in valor_lower) or 'medio-alto' in valor_lower or 'medio alto' in valor_lower
+    
+    n_sanos = df[col_clase].apply(es_sano).sum()
+    return (n_sanos / len(df) * 100) if len(df) > 0 else 0
+
+
 def mostrar_kpis(df, indice, prefix="", info_superficie=None):
     """Muestra KPIs incluyendo superficie si está disponible."""
     
@@ -1162,10 +1185,8 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
             if indice in df.columns:
                 st.metric(f"📊 {indice.upper()} μ", f"{df[indice].mean():.3f}")
         with col2:
-            col_clase = f"{indice}_clase"
-            if col_clase in df.columns:
-                pct = (df[col_clase].apply(lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()).sum() / len(df) * 100)
-                st.metric("✅ % Sanos", f"{pct:.1f}%")
+            pct_sanos = calcular_pct_sanos(df, indice)
+            st.metric("✅ % Sanos", f"{pct_sanos:.1f}%")
         with col3:
             if 'altura_m' in df.columns and df['altura_m'].notna().any():
                 st.metric("📏 Altura μ", f"{df['altura_m'].mean():.2f} m")
@@ -1181,10 +1202,8 @@ def mostrar_kpis(df, indice, prefix="", info_superficie=None):
             if indice in df.columns:
                 st.metric(f"📊 {indice.upper()} μ", f"{df[indice].mean():.3f}")
         with cols[2]:
-            col_clase = f"{indice}_clase"
-            if col_clase in df.columns:
-                pct = (df[col_clase].apply(lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()).sum() / len(df) * 100)
-                st.metric("✅ % Sanos", f"{pct:.1f}%")
+            pct_sanos = calcular_pct_sanos(df, indice)
+            st.metric("✅ % Sanos", f"{pct_sanos:.1f}%")
         with cols[3]:
             if 'altura_m' in df.columns and df['altura_m'].notna().any():
                 st.metric("📏 Altura μ", f"{df['altura_m'].mean():.2f} m")
@@ -1199,12 +1218,13 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
     # Mostrar descripción del índice
     mostrar_descripcion_indice(indice)
     
+    # Obtener fechas únicas en los datos filtrados
     fechas_unicas = []
     if 'fecha_vuelo' in df.columns:
         fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
-    mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
     n_vuelos = len(fechas_unicas)
+    mostrar_comparacion = n_vuelos >= 2
     
     # Obtener info de superficie
     info_sup = obtener_info_superficie(df, gdf_poligonos)
@@ -1418,8 +1438,8 @@ def tab_analisis(df, indice, fechas_sel):
     if 'fecha_vuelo' in df.columns:
         fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
     
-    mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
     n_vuelos = len(fechas_unicas)
+    mostrar_comparacion = n_vuelos >= 2
     
     if mostrar_comparacion:
         # Preparar datos para cada vuelo
@@ -1659,7 +1679,7 @@ def tab_datos(df, indices_disponibles):
 def crear_sidebar(df):
     """Sidebar con filtros en cascada."""
     df_filtrado = df.copy()
-    fechas_sel = 'Todas'
+    fechas_sel = []
     
     with st.sidebar:
         # Logo
@@ -1675,12 +1695,35 @@ def crear_sidebar(df):
             if cultivo_sel != 'Todos':
                 df_filtrado = df_filtrado[df_filtrado['cultivo'] == cultivo_sel]
         
-        # 1. Filtro de fecha
+        # 1. Filtro de fecha - MULTISELECT para seleccionar vuelos específicos
         if 'fecha_vuelo' in df_filtrado.columns:
-            fechas = ['Todas'] + sorted([str(f) for f in df_filtrado['fecha_vuelo'].dropna().unique()])
-            fechas_sel = st.selectbox("📅 Fecha de Vuelo", fechas)
-            if fechas_sel != 'Todas':
-                df_filtrado = df_filtrado[df_filtrado['fecha_vuelo'].astype(str) == fechas_sel]
+            fechas_disponibles = sorted([str(f) for f in df_filtrado['fecha_vuelo'].dropna().unique()])
+            
+            # Opción para seleccionar modo
+            modo_fecha = st.radio(
+                "📅 Modo de visualización",
+                ["Comparar todos", "Seleccionar vuelos"],
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+            
+            if modo_fecha == "Comparar todos":
+                fechas_sel = fechas_disponibles  # Todas las fechas
+                st.info(f"📅 Comparando {len(fechas_disponibles)} vuelos")
+            else:
+                fechas_sel = st.multiselect(
+                    "📅 Seleccionar Vuelos",
+                    fechas_disponibles,
+                    default=fechas_disponibles[:1] if fechas_disponibles else [],
+                    help="Selecciona 1 vuelo para ver individual, 2 o más para comparar"
+                )
+                if not fechas_sel:
+                    fechas_sel = fechas_disponibles  # Si no selecciona nada, mostrar todos
+                    st.warning("Selecciona al menos un vuelo")
+            
+            # Filtrar por fechas seleccionadas
+            if fechas_sel:
+                df_filtrado = df_filtrado[df_filtrado['fecha_vuelo'].astype(str).isin(fechas_sel)]
         
         # 2. Filtro de especie (sobre datos filtrados por fecha)
         if 'Especie' in df_filtrado.columns:
