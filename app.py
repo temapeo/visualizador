@@ -829,7 +829,7 @@ def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None)
     return fig
 
 
-def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None):
+def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None, center_lat=None, center_lon=None, zoom=None):
     """Crea mapa con Plotly usando tiles satelitales de Google."""
     col_clase = f"{indice}_clase"
     if col_clase not in df.columns or len(df) == 0:
@@ -972,31 +972,34 @@ def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligo
             showlegend=True
         ))
     
-    center_lat = df['lat'].mean()
-    center_lon = df['lon'].mean()
+    # Usar centro y zoom externos si se proporcionan, sino calcular
+    if center_lat is None or center_lon is None:
+        center_lat = df['lat'].mean()
+        center_lon = df['lon'].mean()
     
-    lat_range = df['lat'].max() - df['lat'].min()
-    lon_range = df['lon'].max() - df['lon'].min()
-    max_range = max(lat_range, lon_range)
-    
-    # Agregar margen para ver el polígono completo (15% extra)
-    max_range = max_range * 1.15
-    
-    # Zoom ajustado para ver polígono completo
-    if max_range < 0.003:
-        zoom = 17
-    elif max_range < 0.006:
-        zoom = 16
-    elif max_range < 0.01:
-        zoom = 15
-    elif max_range < 0.02:
-        zoom = 14
-    elif max_range < 0.05:
-        zoom = 13
-    elif max_range < 0.1:
-        zoom = 12
-    else:
-        zoom = 11
+    if zoom is None:
+        lat_range = df['lat'].max() - df['lat'].min()
+        lon_range = df['lon'].max() - df['lon'].min()
+        max_range = max(lat_range, lon_range)
+        
+        # Agregar margen para ver el polígono completo (15% extra)
+        max_range = max_range * 1.15
+        
+        # Zoom ajustado para ver polígono completo
+        if max_range < 0.003:
+            zoom = 17
+        elif max_range < 0.006:
+            zoom = 16
+        elif max_range < 0.01:
+            zoom = 15
+        elif max_range < 0.02:
+            zoom = 14
+        elif max_range < 0.05:
+            zoom = 13
+        elif max_range < 0.1:
+            zoom = 12
+        else:
+            zoom = 11
     
     # Usar estilo white-bg con capa satelital de Google
     fig.update_layout(
@@ -1249,15 +1252,51 @@ def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
         
         st.markdown("---")
         
-        # Mapas - mostrar columnas según número de vuelos
+        # Mapas sincronizados - calcular centro y zoom común
+        # Usar todos los datos para calcular el centro y zoom
+        all_lats = df['lat'].dropna()
+        all_lons = df['lon'].dropna()
+        
+        if len(all_lats) > 0 and len(all_lons) > 0:
+            center_lat = all_lats.mean()
+            center_lon = all_lons.mean()
+            lat_range = all_lats.max() - all_lats.min()
+            lon_range = all_lons.max() - all_lons.min()
+            max_range = max(lat_range, lon_range) * 1.15
+            
+            # Calcular zoom
+            if max_range < 0.003:
+                zoom_comun = 17
+            elif max_range < 0.006:
+                zoom_comun = 16
+            elif max_range < 0.01:
+                zoom_comun = 15
+            elif max_range < 0.02:
+                zoom_comun = 14
+            elif max_range < 0.05:
+                zoom_comun = 13
+            elif max_range < 0.1:
+                zoom_comun = 12
+            else:
+                zoom_comun = 11
+        else:
+            center_lat, center_lon, zoom_comun = -35.01, -71.34, 14
+        
+        # Crear mapas con centro y zoom compartido
         cols = st.columns(n_vuelos)
         for i, (fecha, df_vuelo) in enumerate(zip(fechas_unicas, dfs_vuelos)):
             with cols[i]:
                 st.markdown(f"**🗺️ Mapa - {fecha}**")
                 # Sampling si hay muchos puntos
                 df_sample = df_vuelo.sample(n=min(8000, len(df_vuelo)), random_state=42) if len(df_vuelo) > 10000 else df_vuelo
-                mapa = crear_mapa_plotly_satelite(df_sample, indice, radio_puntos * 1.5, f"{indice.upper()} - {fecha}", gdf_poligonos)
+                mapa = crear_mapa_plotly_satelite(
+                    df_sample, indice, radio_puntos, 
+                    f"{indice.upper()} - {fecha}", gdf_poligonos,
+                    center_lat=center_lat, center_lon=center_lon, zoom=zoom_comun
+                )
                 if mapa:
+                    # Usar uirevision para mantener sincronización
+                    mapa.update_layout(uirevision='mapas_sincronizados')
                     st.plotly_chart(mapa, use_container_width=True, key=f"mapa_{i}")
                 else:
                     st.warning(f"No hay datos para mostrar en el mapa del vuelo {fecha}")
@@ -1725,21 +1764,14 @@ def crear_sidebar(df):
             if fechas_sel:
                 df_filtrado = df_filtrado[df_filtrado['fecha_vuelo'].astype(str).isin(fechas_sel)]
         
-        # 2. Filtro de especie (sobre datos filtrados por fecha)
-        if 'Especie' in df_filtrado.columns:
-            especies = ['Todas'] + sorted(df_filtrado['Especie'].dropna().unique().tolist())
-            especie_sel = st.selectbox("🌿 Especie", especies)
-            if especie_sel != 'Todas':
-                df_filtrado = df_filtrado[df_filtrado['Especie'] == especie_sel]
-        
-        # 3. Filtro de variedad (sobre datos filtrados por especie)
+        # 2. Filtro de variedad (directo, sin especie)
         if 'Variedad' in df_filtrado.columns:
             variedades = ['Todas'] + sorted(df_filtrado['Variedad'].dropna().unique().tolist())
             variedad_sel = st.selectbox("🍒 Variedad", variedades)
             if variedad_sel != 'Todas':
                 df_filtrado = df_filtrado[df_filtrado['Variedad'] == variedad_sel]
         
-        # 4. Filtro de cuarteles (MULTISELECT sobre datos filtrados)
+        # 3. Filtro de cuarteles (MULTISELECT sobre datos filtrados)
         if 'Cuartel' in df_filtrado.columns:
             cuarteles_disponibles = sorted(df_filtrado['Cuartel'].dropna().unique().tolist())
             cuarteles_sel = st.multiselect(
@@ -1766,7 +1798,7 @@ def crear_sidebar(df):
         
         st.markdown("---")
         st.header("⚙️ Visualización")
-        radio_puntos = st.slider("Tamaño puntos", 1, 8, 3, 1)
+        radio_puntos = st.slider("Tamaño puntos", 1, 8, 1, 1)  # Default = 1
         
         st.markdown("---")
         st.header("🎨 Leyenda (7 Clases)")
