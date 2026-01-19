@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-TEMAPEO VIEWER v7 - Dashboard con Descripciones y Filtros Mejorados
-- Descripciones de índices espectrales
-- Filtros en cascada (especie → variedad → cuartel)
-- Selección múltiple de cuarteles
-- Soporte para logo personalizado
+TEMAPEO VIEWER v8 - Dashboard con 7 Clases y Múltiples Cultivos
+- Simbología de 7 clases estandarizada
+- Soporte para Cerezos y Kiwis
+- Filtro por cultivo
+- Comparación temporal mejorada
 
 Autor: TeMapeo SPA
-Versión: 7.0
+Versión: 8.0
 """
 
 import streamlit as st
@@ -17,10 +17,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-# Folium comentado - usando Plotly Mapbox (más estable en Streamlit Cloud)
-# import folium
-# from folium.plugins import Fullscreen
-# from streamlit_folium import st_folium
 from datetime import datetime
 import os
 import base64
@@ -58,7 +54,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-header {font-size: 2.2rem; font-weight: bold; color: #1a9641; text-align: center; padding: 0.5rem;}
+    .main-header {font-size: 2.2rem; font-weight: bold; color: #1a9850; text-align: center; padding: 0.5rem;}
     .sub-header {font-size: 1rem; color: #666; text-align: center; margin-bottom: 1rem;}
     
     /* Reducir tamaño de métricas KPI - más compacto */
@@ -81,24 +77,29 @@ st.markdown("""
 # CONFIGURACIÓN - RUTAS PARA STREAMLIT CLOUD
 # =============================================================================
 
-GPKG_PATH = "datos/Individualizacion_consolidado_oct_dic.gpkg"
+GPKG_PATH = "datos/BD_FINAL_todos_cultivos_vuelos.gpkg"
 POLIGONOS_PATH = "datos/Poligonos_Abud.gpkg"
 
 # Ruta al logo (PNG o JPG)
 LOGO_PATH = 'datos/logo.png'
 
 # =============================================================================
-# COLORES Y CONFIGURACIÓN
+# COLORES Y CONFIGURACIÓN - 7 CLASES
 # =============================================================================
 
 COLORES_CLASE = {
-    'Muy bajo': '#d7191c',
-    'Bajo': '#fdae61', 
-    'Medio': '#ffffbf',
-    'Medio-alto': '#a6d96a',
-    'Alto': '#1a9641',
-    'Sin dato': '#969696'
+    'Muy bajo': '#D73027',      # Rojo
+    'Bajo': '#FC8D59',          # Naranja
+    'Medio-bajo': '#FEE08B',    # Amarillo
+    'Medio': '#D9EF8B',         # Verde amarillo
+    'Medio-alto': '#91CF60',    # Verde claro
+    'Alto': '#1A9850',          # Verde
+    'Muy alto': '#006837',      # Verde oscuro
+    'Sin dato': '#BDBDBD'       # Gris
 }
+
+# Orden de clases para gráficos
+ORDEN_CLASES = ['Muy bajo', 'Bajo', 'Medio-bajo', 'Medio', 'Medio-alto', 'Alto', 'Muy alto', 'Sin dato']
 
 # Información detallada de cada índice
 INDICES_INFO = {
@@ -108,139 +109,186 @@ INDICES_INFO = {
         'categoria': 'Vigor Vegetativo',
         'descripcion': 'Mide la cantidad y vigor de la vegetación. Valores altos (>0.6) indican vegetación densa y saludable. Valores bajos (<0.3) indican estrés, suelo desnudo o vegetación escasa.',
         'interpretacion': {
-            'Alto': 'Árbol con excelente vigor, follaje denso y buena actividad fotosintética',
+            'Muy alto': 'Excelente vigor, máxima actividad fotosintética',
+            'Alto': 'Árbol con excelente vigor, follaje denso',
             'Medio-alto': 'Buen estado general, follaje saludable',
             'Medio': 'Vigor moderado, puede requerir atención',
+            'Medio-bajo': 'Vigor bajo, monitorear evolución',
             'Bajo': 'Estrés vegetativo, posible déficit hídrico o nutricional',
             'Muy bajo': 'Estrés severo, requiere intervención inmediata'
         },
+        'rangos_7clases': ['≤0.30', '0.30-0.40', '0.40-0.50', '0.50-0.60', '0.60-0.70', '0.70-0.80', '≥0.80'],
         'rango': '0 a 1'
     },
     'osavi': {
         'nombre': 'OSAVI',
         'nombre_completo': 'Índice de Vegetación Ajustado al Suelo Optimizado',
         'categoria': 'Vigor Vegetativo',
-        'descripcion': 'Similar al NDVI pero minimiza la influencia del suelo. Ideal para cultivos con cobertura parcial del suelo. Más estable que NDVI en condiciones de baja cobertura vegetal.',
+        'descripcion': 'Similar al NDVI pero minimiza la influencia del suelo. Ideal para cultivos con cobertura parcial del suelo.',
         'interpretacion': {
+            'Muy alto': 'Máxima cobertura vegetal',
             'Alto': 'Excelente cobertura vegetal y vigor',
             'Medio-alto': 'Buena cobertura, vegetación saludable',
             'Medio': 'Cobertura moderada',
+            'Medio-bajo': 'Cobertura limitada',
             'Bajo': 'Baja cobertura o estrés',
             'Muy bajo': 'Muy baja cobertura o estrés severo'
         },
-        'rango': '0 a 0.6'
+        'rangos_7clases': ['≤0.15', '0.15-0.25', '0.25-0.35', '0.35-0.45', '0.45-0.55', '0.55-0.70', '≥0.70'],
+        'rango': '0 a 1'
     },
     'gndvi': {
         'nombre': 'GNDVI',
         'nombre_completo': 'Índice de Vegetación de Diferencia Normalizada Verde',
         'categoria': 'Vigor Vegetativo',
-        'descripcion': 'Usa la banda verde en lugar de roja. Más sensible a variaciones de clorofila que el NDVI. Útil para detectar diferencias sutiles en el contenido de clorofila.',
+        'descripcion': 'Usa la banda verde en lugar de roja. Más sensible a variaciones de clorofila que el NDVI.',
         'interpretacion': {
+            'Muy alto': 'Máximo contenido de clorofila',
             'Alto': 'Alto contenido de clorofila, vegetación muy activa',
             'Medio-alto': 'Buen contenido de clorofila',
             'Medio': 'Contenido moderado de clorofila',
+            'Medio-bajo': 'Contenido bajo de clorofila',
             'Bajo': 'Bajo contenido de clorofila',
             'Muy bajo': 'Deficiencia severa de clorofila'
         },
+        'rangos_7clases': ['≤0.30', '0.30-0.40', '0.40-0.50', '0.50-0.60', '0.60-0.70', '0.70-0.80', '≥0.80'],
         'rango': '0 a 1'
     },
     'savi': {
         'nombre': 'SAVI',
         'nombre_completo': 'Índice de Vegetación Ajustado al Suelo',
         'categoria': 'Vigor Vegetativo',
-        'descripcion': 'Minimiza efectos del suelo mediante un factor de corrección (L=0.5). Recomendado cuando hay suelo visible entre las plantas.',
+        'descripcion': 'Minimiza efectos del suelo mediante un factor de corrección (L=0.5).',
         'interpretacion': {
+            'Muy alto': 'Máximo vigor vegetativo',
             'Alto': 'Excelente vigor vegetativo',
             'Medio-alto': 'Buen estado vegetativo',
             'Medio': 'Estado moderado',
+            'Medio-bajo': 'Estado bajo',
             'Bajo': 'Estrés o baja cobertura',
             'Muy bajo': 'Estrés severo'
         },
-        'rango': '0 a 0.5'
+        'rangos_7clases': ['≤0.15', '0.15-0.25', '0.25-0.35', '0.35-0.45', '0.45-0.55', '0.55-0.70', '≥0.70'],
+        'rango': '0 a 1'
     },
     'msavi2': {
         'nombre': 'MSAVI2',
         'nombre_completo': 'Índice de Vegetación Ajustado al Suelo Modificado',
         'categoria': 'Vigor Vegetativo',
-        'descripcion': 'Versión mejorada del SAVI con factor de corrección automático. Reduce aún más la influencia del suelo sin necesidad de ajustar parámetros.',
+        'descripcion': 'Versión mejorada del SAVI con factor de corrección automático.',
         'interpretacion': {
+            'Muy alto': 'Vegetación muy densa y vigorosa',
             'Alto': 'Vegetación densa y vigorosa',
             'Medio-alto': 'Buena densidad vegetal',
             'Medio': 'Densidad moderada',
+            'Medio-bajo': 'Densidad baja',
             'Bajo': 'Baja densidad o estrés',
             'Muy bajo': 'Muy baja densidad'
         },
-        'rango': '0 a 0.5'
+        'rangos_7clases': ['≤0.30', '0.30-0.40', '0.40-0.50', '0.50-0.60', '0.60-0.70', '0.70-0.80', '≥0.80'],
+        'rango': '0 a 1'
     },
     'evi2': {
         'nombre': 'EVI2',
         'nombre_completo': 'Índice de Vegetación Mejorado (2 bandas)',
         'categoria': 'Vigor Vegetativo',
-        'descripcion': 'Optimizado para áreas de alta biomasa donde el NDVI se satura. Mejor respuesta en vegetación densa. No requiere banda azul.',
+        'descripcion': 'Optimizado para áreas de alta biomasa donde el NDVI se satura.',
         'interpretacion': {
+            'Muy alto': 'Máxima biomasa',
             'Alto': 'Alta biomasa, vegetación muy densa',
             'Medio-alto': 'Buena biomasa',
             'Medio': 'Biomasa moderada',
+            'Medio-bajo': 'Biomasa baja',
             'Bajo': 'Baja biomasa',
             'Muy bajo': 'Muy baja biomasa'
         },
-        'rango': '0 a 0.5'
+        'rangos_7clases': ['≤0.25', '0.25-0.35', '0.35-0.45', '0.45-0.55', '0.55-0.65', '0.65-0.75', '≥0.75'],
+        'rango': '0 a 1'
     },
     'lci': {
         'nombre': 'LCI',
         'nombre_completo': 'Índice de Clorofila de Hoja',
         'categoria': 'Contenido de Clorofila',
-        'descripcion': 'Estima el contenido de clorofila en las hojas usando bandas NIR y RedEdge. Correlaciona directamente con el contenido de nitrógeno foliar. Útil para gestión de fertilización.',
+        'descripcion': 'Estima el contenido de clorofila en las hojas. Correlaciona con el contenido de nitrógeno foliar.',
         'interpretacion': {
-            'Alto': 'Alto contenido de clorofila, buena nutrición nitrogenada',
+            'Muy alto': 'Máximo contenido de clorofila y nitrógeno',
+            'Alto': 'Alto contenido de clorofila, buena nutrición',
             'Medio-alto': 'Buen estado nutricional',
             'Medio': 'Nutrición moderada',
+            'Medio-bajo': 'Nutrición limitada',
             'Bajo': 'Posible deficiencia de nitrógeno',
             'Muy bajo': 'Deficiencia severa, fertilizar con urgencia'
         },
-        'rango': '0.1 a 0.85'
+        'rangos_7clases': ['≤0.30', '0.30-0.40', '0.40-0.50', '0.50-0.60', '0.60-0.70', '0.70-0.80', '≥0.80'],
+        'rango': '0 a 1'
     },
     'ndre': {
         'nombre': 'NDRE',
         'nombre_completo': 'Índice de Diferencia Normalizada Red Edge',
         'categoria': 'Contenido de Clorofila',
-        'descripcion': 'Usa la banda Red Edge, muy sensible al contenido de clorofila. Ideal para detectar estrés temprano antes de que sea visible. No se satura en vegetación densa.',
+        'descripcion': 'Muy sensible al contenido de clorofila. Ideal para detectar estrés temprano.',
         'interpretacion': {
+            'Muy alto': 'Máximo contenido de clorofila',
             'Alto': 'Excelente contenido de clorofila, planta muy sana',
             'Medio-alto': 'Buen contenido de clorofila',
             'Medio': 'Contenido normal',
+            'Medio-bajo': 'Contenido bajo',
             'Bajo': 'Bajo contenido, posible estrés inicial',
             'Muy bajo': 'Estrés significativo detectado'
         },
-        'rango': '0.15 a 0.5'
+        'rangos_7clases': ['≤0.20', '0.20-0.30', '0.30-0.40', '0.40-0.50', '0.50-0.60', '0.60-0.70', '≥0.70'],
+        'rango': '0 a 1'
     },
     'cirededge': {
         'nombre': 'CIRedEdge',
         'nombre_completo': 'Índice de Clorofila Red Edge',
         'categoria': 'Contenido de Clorofila',
-        'descripcion': 'Altamente sensible a pequeños cambios en el contenido de clorofila. Excelente para monitoreo de salud del cultivo y detección temprana de problemas.',
+        'descripcion': 'Altamente sensible a pequeños cambios en el contenido de clorofila.',
         'interpretacion': {
-            'Alto': 'Máxima actividad fotosintética',
+            'Muy alto': 'Máxima actividad fotosintética',
+            'Alto': 'Excelente actividad fotosintética',
             'Medio-alto': 'Buena actividad fotosintética',
             'Medio': 'Actividad normal',
+            'Medio-bajo': 'Actividad reducida',
             'Bajo': 'Reducción de actividad fotosintética',
             'Muy bajo': 'Actividad fotosintética muy reducida'
         },
-        'rango': '0 a 1'
+        'rangos_7clases': ['≤0.50', '0.50-1.00', '1.00-1.50', '1.50-2.00', '2.00-2.50', '2.50-3.50', '≥3.50'],
+        'rango': '0 a 5'
+    },
+    'cigreen': {
+        'nombre': 'CIGreen',
+        'nombre_completo': 'Índice de Clorofila Verde',
+        'categoria': 'Contenido de Clorofila',
+        'descripcion': 'Sensible al contenido de clorofila usando la banda verde.',
+        'interpretacion': {
+            'Muy alto': 'Máximo contenido de clorofila',
+            'Alto': 'Alto contenido de clorofila',
+            'Medio-alto': 'Buen contenido de clorofila',
+            'Medio': 'Contenido normal',
+            'Medio-bajo': 'Contenido bajo',
+            'Bajo': 'Bajo contenido de clorofila',
+            'Muy bajo': 'Deficiencia de clorofila'
+        },
+        'rangos_7clases': ['≤0.75', '0.75-1.50', '1.50-2.25', '2.25-3.00', '3.00-4.00', '4.00-5.00', '≥5.00'],
+        'rango': '0 a 7'
     },
     'mcari': {
         'nombre': 'MCARI',
         'nombre_completo': 'Índice de Absorción de Clorofila Modificado',
         'categoria': 'Estructura del Dosel',
-        'descripcion': 'Sensible tanto al contenido de clorofila como a la estructura del dosel. Útil para evaluar la arquitectura de la copa del árbol.',
+        'descripcion': 'Sensible al contenido de clorofila y a la estructura del dosel.',
         'interpretacion': {
+            'Muy alto': 'Dosel óptimo con máxima clorofila',
             'Alto': 'Dosel bien estructurado con alta clorofila',
             'Medio-alto': 'Buena estructura de dosel',
             'Medio': 'Estructura normal',
+            'Medio-bajo': 'Estructura limitada',
             'Bajo': 'Estructura de dosel reducida',
             'Muy bajo': 'Dosel muy reducido o dañado'
         },
-        'rango': '0 a 1'
+        'rangos_7clases': ['≤0.30', '0.30-0.60', '0.60-1.00', '1.00-1.50', '1.50-2.00', '2.00-2.50', '≥2.50'],
+        'rango': '0 a 3'
     }
 }
 
@@ -280,7 +328,7 @@ def cargar_datos(ruta_gpkg):
     """Carga datos del GPKG."""
     try:
         gdf = gpd.read_file(ruta_gpkg)
-        if gdf.crs.to_epsg() != 4326:
+        if gdf.crs and gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs(epsg=4326)
         gdf['lon'] = gdf.geometry.x
         gdf['lat'] = gdf.geometry.y
@@ -297,1174 +345,452 @@ def cargar_poligonos(ruta_gpkg):
         if not os.path.exists(ruta_gpkg):
             return None
         gdf = gpd.read_file(ruta_gpkg)
-        if gdf.crs.to_epsg() != 4326:
+        if gdf.crs and gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs(epsg=4326)
         return gdf
-    except Exception as e:
-        st.warning(f"No se pudieron cargar polígonos: {e}")
+    except:
         return None
 
 
-def obtener_info_superficie(df_puntos, gdf_poligonos, cuarteles_filtrados=None):
-    """Obtiene información de superficie de los cuarteles."""
-    if gdf_poligonos is None:
-        return None
-    
-    # Filtrar polígonos según cuarteles en los datos
-    if cuarteles_filtrados is not None and len(cuarteles_filtrados) > 0:
-        gdf_filtrado = gdf_poligonos[gdf_poligonos['Cuartel'].isin(cuarteles_filtrados)]
-    else:
-        cuarteles_en_datos = df_puntos['Cuartel'].unique() if 'Cuartel' in df_puntos.columns else []
-        gdf_filtrado = gdf_poligonos[gdf_poligonos['Cuartel'].isin(cuarteles_en_datos)]
-    
-    if len(gdf_filtrado) == 0:
-        return None
-    
-    # Calcular totales
-    superficie_total = gdf_filtrado['Superficie_ha'].sum()
-    n_arboles = len(df_puntos)
-    arboles_por_ha = n_arboles / superficie_total if superficie_total > 0 else 0
-    
-    return {
-        'superficie_total': superficie_total,
-        'n_arboles': n_arboles,
-        'arboles_por_ha': arboles_por_ha,
-        'n_cuarteles': len(gdf_filtrado),
-        'gdf': gdf_filtrado
-    }
+def obtener_columna_clase(df, indice):
+    """Obtiene el nombre de la columna de clase para un índice."""
+    # Buscar variantes de nombre de columna
+    variantes = [f"{indice}_class", f"{indice}_clase", f"{indice}_Class"]
+    for var in variantes:
+        if var in df.columns:
+            return var
+    return None
 
 
-def asignar_color_hex(clase):
-    """Asigna color según clase."""
-    clase_str = str(clase).lower()
-    if 'muy bajo' in clase_str:
-        return COLORES_CLASE['Muy bajo']
-    elif 'bajo' in clase_str and 'muy' not in clase_str and 'medio' not in clase_str:
-        return COLORES_CLASE['Bajo']
-    elif 'medio-alto' in clase_str or 'medio alto' in clase_str:
-        return COLORES_CLASE['Medio-alto']
-    elif 'medio' in clase_str:
-        return COLORES_CLASE['Medio']
-    elif 'alto' in clase_str:
-        return COLORES_CLASE['Alto']
-    return COLORES_CLASE['Sin dato']
-
-
-def mostrar_descripcion_indice(indice):
-    """Muestra la descripción del índice seleccionado."""
-    if indice in INDICES_INFO:
-        info = INDICES_INFO[indice]
-        st.markdown(f"""
-        <div class="indice-description">
-            <strong>📊 {info['nombre_completo']} ({indice.upper()})</strong> | <em>{info['categoria']}</em><br>
-            {info['descripcion']}<br>
-            <small>Rango típico: {info['rango']}</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def generar_analisis_automatico(df, indice, fechas_sel='Todas'):
-    """Genera un análisis exploratorio automático basado en los datos usando componentes Streamlit."""
-    
-    if indice not in df.columns:
-        return None
-    
-    col_clase = f"{indice}_clase"
-    info_indice = INDICES_INFO.get(indice, {})
-    nombre_indice = info_indice.get('nombre', indice.upper())
-    categoria = info_indice.get('categoria', 'Vegetación')
-    
-    # Estadísticas básicas
-    media = df[indice].mean()
-    std = df[indice].std()
-    mediana = df[indice].median()
-    n_total = len(df)
-    
-    # Distribución por clases
-    if col_clase in df.columns:
-        n_muy_bajo = sum(1 for x in df[col_clase] if 'muy bajo' in str(x).lower())
-        n_bajo = sum(1 for x in df[col_clase] if 'bajo' in str(x).lower() and 'muy' not in str(x).lower())
-        n_medio = sum(1 for x in df[col_clase] if 'medio' in str(x).lower() and 'alto' not in str(x).lower())
-        n_medio_alto = sum(1 for x in df[col_clase] if 'medio-alto' in str(x).lower() or 'medio alto' in str(x).lower())
-        n_alto = sum(1 for x in df[col_clase] if 'alto' in str(x).lower() and 'medio' not in str(x).lower())
-        
-        pct_sanos = ((n_alto + n_medio_alto) / n_total * 100) if n_total > 0 else 0
-        pct_problematicos = ((n_muy_bajo + n_bajo) / n_total * 100) if n_total > 0 else 0
-    else:
-        pct_sanos = 0
-        pct_problematicos = 0
-        n_muy_bajo = n_bajo = n_medio = n_medio_alto = n_alto = 0
-    
-    # Análisis por cuartel
-    cuarteles_problematicos = []
-    if 'Cuartel' in df.columns:
-        cuartel_stats = df.groupby('Cuartel')[indice].agg(['mean', 'count']).round(3)
-        media_general = df[indice].mean()
-        
-        for cuartel, row in cuartel_stats.iterrows():
-            if row['mean'] < media_general - std:
-                cuarteles_problematicos.append({
-                    'nombre': cuartel,
-                    'media': row['mean'],
-                    'n': int(row['count']),
-                    'diferencia': round((row['mean'] - media_general) / media_general * 100, 1)
-                })
-    
-    # Determinar estado general
-    if pct_sanos >= 80:
-        estado_general = "EXCELENTE"
-        color_estado = "green"
-    elif pct_sanos >= 60:
-        estado_general = "BUENO"
-        color_estado = "green"
-    elif pct_sanos >= 40:
-        estado_general = "MODERADO"
-        color_estado = "orange"
-    elif pct_sanos >= 20:
-        estado_general = "BAJO"
-        color_estado = "orange"
-    else:
-        estado_general = "CRÍTICO"
-        color_estado = "red"
-    
-    # Mostrar análisis usando componentes Streamlit
-    st.markdown(f"### 📋 Análisis Automático - {nombre_indice}")
-    
-    st.markdown(f"**Estado General:** :{color_estado}[**{estado_general}**]")
-    
-    st.markdown(f"""
-    El índice **{nombre_indice}** presenta un valor promedio de **{media:.3f}** 
-    (mediana: {mediana:.3f}, desv. est.: {std:.3f}). 
-    Esto indica un estado de {categoria.lower()} **{estado_general.lower()}** en el cultivo analizado.
-    """)
-    
-    # Distribución
-    st.markdown("#### 📊 Distribución del Cultivo:")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("✅ Sanos (Alto + Medio-Alto)", f"{pct_sanos:.1f}%", f"{n_alto + n_medio_alto:,} árboles")
-    with col2:
-        st.metric("⚠️ Monitorear (Medio)", f"{n_medio/n_total*100:.1f}%", f"{n_medio:,} árboles")
-    with col3:
-        st.metric("🚨 Problemáticos (Bajo + Muy Bajo)", f"{pct_problematicos:.1f}%", f"{n_muy_bajo + n_bajo:,} árboles")
-    
-    # Alertas
-    if n_muy_bajo > 0:
-        st.error(f"🚨 **Atención Prioritaria:** Se detectaron **{n_muy_bajo:,} árboles** en categoría **Muy Bajo** que requieren **intervención inmediata** ({n_muy_bajo/n_total*100:.2f}% del total).")
-    
-    # Cuarteles problemáticos
-    if cuarteles_problematicos:
-        st.warning("📍 **Cuarteles con Bajo Desempeño:**")
-        for c in sorted(cuarteles_problematicos, key=lambda x: x['media'])[:5]:
-            st.markdown(f"- **{c['nombre']}**: media {c['media']:.3f} ({c['diferencia']:+.1f}% vs promedio) - {c['n']:,} árboles")
-    
-    # Recomendaciones
-    recomendaciones = []
-    
-    if 'clorofila' in categoria.lower() or indice in ['lci', 'ndre', 'cirededge']:
-        if pct_problematicos > 10:
-            recomendaciones.append("Evaluar programa de fertilización nitrogenada en áreas afectadas")
-            recomendaciones.append("Realizar análisis foliar para confirmar deficiencias nutricionales")
-        if n_muy_bajo > 0:
-            recomendaciones.append("Aplicación urgente de fertilizante foliar en árboles críticos")
-    
-    if 'vigor' in categoria.lower() or indice in ['ndvi', 'osavi', 'gndvi', 'savi']:
-        if pct_problematicos > 10:
-            recomendaciones.append("Revisar sistema de riego en zonas con bajo vigor")
-            recomendaciones.append("Evaluar presencia de plagas o enfermedades")
-        if n_muy_bajo > 0:
-            recomendaciones.append("Inspección de campo urgente en árboles con vigor muy bajo")
-    
-    if pct_sanos < 60:
-        recomendaciones.append("Programar vuelo de seguimiento en 2-3 semanas para evaluar evolución")
-    
-    if recomendaciones:
-        st.info("💡 **Recomendaciones:**")
-        for rec in recomendaciones:
-            st.markdown(f"- {rec}")
-    
-    return True  # Indica que ya se mostró
-
-
-def generar_analisis_comparativo(df, indice, fecha1, fecha2):
-    """Genera análisis comparativo entre dos vuelos usando componentes Streamlit."""
-    
-    if indice not in df.columns or 'fecha_vuelo' not in df.columns:
-        return None
-    
-    col_clase = f"{indice}_clase"
-    nombre_indice = INDICES_INFO.get(indice, {}).get('nombre', indice.upper())
-    
-    df1 = df[df['fecha_vuelo'].astype(str) == str(fecha1)]
-    df2 = df[df['fecha_vuelo'].astype(str) == str(fecha2)]
-    
-    if len(df1) == 0 or len(df2) == 0:
-        return None
-    
-    media1 = df1[indice].mean()
-    media2 = df2[indice].mean()
-    cambio = media2 - media1
-    cambio_pct = (cambio / media1 * 100) if media1 != 0 else 0
-    
-    # Calcular % sanos en cada vuelo
-    def calc_pct_sanos(df_temp):
-        if col_clase not in df_temp.columns:
-            return 0
-        n_sanos = sum(1 for x in df_temp[col_clase] if 'alto' in str(x).lower() and 'bajo' not in str(x).lower())
-        return (n_sanos / len(df_temp) * 100) if len(df_temp) > 0 else 0
-    
-    pct_sanos1 = calc_pct_sanos(df1)
-    pct_sanos2 = calc_pct_sanos(df2)
-    cambio_sanos = pct_sanos2 - pct_sanos1
-    
-    # Determinar tendencia
-    if cambio_pct > 5:
-        tendencia = "MEJORA SIGNIFICATIVA"
-        emoji = "📈"
-        color = "green"
-    elif cambio_pct > 1:
-        tendencia = "LEVE MEJORA"
-        emoji = "📈"
-        color = "green"
-    elif cambio_pct > -1:
-        tendencia = "ESTABLE"
-        emoji = "➡️"
-        color = "gray"
-    elif cambio_pct > -5:
-        tendencia = "LEVE DETERIORO"
-        emoji = "📉"
-        color = "orange"
-    else:
-        tendencia = "DETERIORO SIGNIFICATIVO"
-        emoji = "📉"
-        color = "red"
-    
-    # Mostrar usando componentes Streamlit
-    st.markdown(f"### {emoji} Análisis Comparativo - {nombre_indice}")
-    
-    st.markdown(f"**Tendencia:** :{color}[**{tendencia}**]")
-    
-    # Tabla comparativa usando dataframe
-    tabla_comp = pd.DataFrame({
-        'Métrica': [f'{nombre_indice} Promedio', '% Árboles Sanos'],
-        str(fecha1): [f"{media1:.3f}", f"{pct_sanos1:.1f}%"],
-        str(fecha2): [f"{media2:.3f}", f"{pct_sanos2:.1f}%"],
-        'Cambio': [f"{cambio:+.3f} ({cambio_pct:+.1f}%)", f"{cambio_sanos:+.1f}%"]
-    })
-    
-    st.dataframe(tabla_comp, use_container_width=True, hide_index=True)
-    
-    # Interpretación
-    if cambio_pct > 5:
-        st.success(f"✅ **Interpretación:** El cultivo muestra una **mejora significativa** entre los vuelos. El incremento de {cambio_pct:.1f}% en {nombre_indice} sugiere que las condiciones han mejorado, posiblemente debido a mejoras en riego, fertilización o condiciones climáticas favorables.")
-    elif cambio_pct > 1:
-        st.success(f"✅ **Interpretación:** El cultivo muestra una **leve mejora** entre los vuelos. El incremento de {cambio_pct:.1f}% en {nombre_indice} indica una tendencia positiva.")
-    elif cambio_pct < -5:
-        st.error(f"⚠️ **Interpretación:** Se observa un **deterioro significativo** entre los vuelos. La disminución de {abs(cambio_pct):.1f}% en {nombre_indice} requiere atención. Se recomienda investigar posibles causas: estrés hídrico, problemas fitosanitarios, o deficiencias nutricionales.")
-    elif cambio_pct < -1:
-        st.warning(f"⚠️ **Interpretación:** Se observa un **leve deterioro** entre los vuelos. La disminución de {abs(cambio_pct):.1f}% en {nombre_indice} debe monitorearse.")
-    else:
-        st.info(f"ℹ️ **Interpretación:** El cultivo se mantiene **relativamente estable** entre los vuelos, con una variación de {cambio_pct:+.1f}% en {nombre_indice}. Continuar con el monitoreo regular.")
-    
-    return True  # Indica que ya se mostró
-
-
-# =============================================================================
-# COMPONENTES DE MAPA - PLOTLY MAPBOX
-# =============================================================================
-
-def crear_mapa_plotly(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None):
-    """Crea mapa con Plotly Mapbox (más estable que Folium)."""
-    col_clase = f"{indice}_clase"
-    if col_clase not in df.columns or len(df) == 0:
-        return None
-    
-    # Preparar datos con colores
-    df_plot = df.copy()
-    df_plot['color'] = df_plot[col_clase].apply(asignar_color_hex)
-    df_plot['indice_valor'] = df_plot[indice].round(3)
-    
-    # Manejar altura_m que puede no existir
-    if 'altura_m' in df_plot.columns:
-        df_plot['altura_str'] = df_plot['altura_m'].apply(lambda x: f"{x:.2f} m" if pd.notna(x) else "N/A")
-    else:
-        df_plot['altura_str'] = "N/A"
-    
-    # Texto para hover
-    df_plot['hover_text'] = df_plot.apply(
-        lambda row: f"<b>ID:</b> {row.get('id', 'N/A')}<br>" +
-                    f"<b>Cuartel:</b> {row.get('Cuartel', 'N/A')}<br>" +
-                    f"<b>Variedad:</b> {row.get('Variedad', 'N/A')}<br>" +
-                    f"<b>{indice.upper()}:</b> {row['indice_valor']}<br>" +
-                    f"<b>Clase:</b> {row.get(col_clase, 'N/A')}<br>" +
-                    f"<b>Altura:</b> {row['altura_str']}",
-        axis=1
-    )
-    
-    # Crear figura base con scattermapbox
-    fig = go.Figure()
-    
-    # Agregar polígonos de cuarteles primero (para que queden debajo)
-    if gdf_poligonos is not None and len(gdf_poligonos) > 0:
-        cuarteles_en_datos = df['Cuartel'].unique() if 'Cuartel' in df.columns else []
-        gdf_filtrado = gdf_poligonos[gdf_poligonos['Cuartel'].isin(cuarteles_en_datos)]
-        
-        if len(gdf_filtrado) > 0:
-            stats_cuartel = df.groupby('Cuartel')[indice].mean().to_dict()
-            
-            for _, row in gdf_filtrado.iterrows():
-                cuartel_nombre = row['Cuartel']
-                media_indice = stats_cuartel.get(cuartel_nombre, 0)
-                
-                # Extraer coordenadas del polígono
-                geom = row.geometry
-                if geom.geom_type == 'Polygon':
-                    coords = list(geom.exterior.coords)
-                elif geom.geom_type == 'MultiPolygon':
-                    coords = list(geom.geoms[0].exterior.coords)
-                else:
-                    continue
-                
-                lons = [c[0] for c in coords]
-                lats = [c[1] for c in coords]
-                
-                # Hover text para polígono
-                hover_poligono = (f"<b>{cuartel_nombre}</b><br>"
-                                 f"Especie: {row.get('Especie', 'N/A')}<br>"
-                                 f"Variedad: {row.get('Variedad', 'N/A')}<br>"
-                                 f"Superficie: {row.get('Superficie_ha', 0):.2f} ha<br>"
-                                 f"{indice.upper()} μ: {media_indice:.3f}")
-                
-                # Agregar polígono como línea cerrada
-                fig.add_trace(go.Scattermapbox(
-                    lon=lons,
-                    lat=lats,
-                    mode='lines',
-                    line=dict(width=2, color='#0a12df'),
-                    fill='none',
-                    name=cuartel_nombre,
-                    hoverinfo='text',
-                    hovertext=hover_poligono,
-                    showlegend=False
-                ))
-    
-    # Agrupar puntos por clase para la leyenda
-    def clasificar_punto(clase_str):
-        clase_lower = str(clase_str).lower()
-        if 'muy bajo' in clase_lower:
-            return 'Muy bajo'
-        elif 'medio-alto' in clase_lower or 'medio alto' in clase_lower:
-            return 'Medio-alto'
-        elif 'medio' in clase_lower:
-            return 'Medio'
-        elif 'bajo' in clase_lower:
-            return 'Bajo'
-        elif 'alto' in clase_lower:
-            return 'Alto'
-        return 'Sin dato'
-    
-    df_plot['clase_simple'] = df_plot[col_clase].apply(clasificar_punto)
-    
-    clases_orden = ['Muy bajo', 'Bajo', 'Medio', 'Medio-alto', 'Alto']
-    
-    for clase in clases_orden:
-        df_clase = df_plot[df_plot['clase_simple'] == clase]
-        if len(df_clase) == 0:
-            continue
-        
-        color = COLORES_CLASE.get(clase, '#969696')
-        
-        fig.add_trace(go.Scattermapbox(
-            lon=df_clase['lon'],
-            lat=df_clase['lat'],
-            mode='markers',
-            marker=dict(
-                size=radio_puntos * 3,
-                color=color,
-                opacity=0.8
-            ),
-            name=clase,
-            hoverinfo='text',
-            hovertext=df_clase['hover_text'],
-            showlegend=True
-        ))
-    
-    # Calcular centro y zoom
-    center_lat = df['lat'].mean()
-    center_lon = df['lon'].mean()
-    
-    # Calcular zoom basado en el rango de datos
-    lat_range = df['lat'].max() - df['lat'].min()
-    lon_range = df['lon'].max() - df['lon'].min()
-    max_range = max(lat_range, lon_range)
-    
-    # Agregar margen para ver el polígono completo (15% extra)
-    max_range = max_range * 1.15
-    
-    # Zoom ajustado para ver polígono completo
-    if max_range < 0.003:
-        zoom = 17
-    elif max_range < 0.006:
-        zoom = 16
-    elif max_range < 0.01:
-        zoom = 15
-    elif max_range < 0.02:
-        zoom = 14
-    elif max_range < 0.05:
-        zoom = 13
-    elif max_range < 0.1:
-        zoom = 12
-    else:
-        zoom = 11
-    
-    # Configurar layout del mapa
-    fig.update_layout(
-        mapbox=dict(
-            style="carto-positron",  # Estilo gratuito sin token
-            center=dict(lat=center_lat, lon=center_lon),
-            zoom=zoom
-        ),
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=500,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01,
-            bgcolor="rgba(255,255,255,0.8)",
-            font=dict(size=10)
-        ),
-        hoverlabel=dict(
-            bgcolor="white",
-            font_size=11,
-            font_family="Arial"
-        )
-    )
-    
-    return fig
-
-
-def crear_mapa_plotly_satelite(df, indice, radio_puntos=3, titulo="", gdf_poligonos=None):
-    """Crea mapa con Plotly usando tiles satelitales de Google."""
-    col_clase = f"{indice}_clase"
-    if col_clase not in df.columns or len(df) == 0:
-        return None
-    
-    # Preparar datos con colores
-    df_plot = df.copy()
-    df_plot['color'] = df_plot[col_clase].apply(asignar_color_hex)
-    df_plot['indice_valor'] = df_plot[indice].round(3)
-    
-    # Manejar altura_m que puede no existir
-    if 'altura_m' in df_plot.columns:
-        df_plot['altura_str'] = df_plot['altura_m'].apply(lambda x: f"{x:.2f} m" if pd.notna(x) else "N/A")
-    else:
-        df_plot['altura_str'] = "N/A"
-    
-    # Texto para hover
-    df_plot['hover_text'] = df_plot.apply(
-        lambda row: f"<b>ID:</b> {row.get('id', 'N/A')}<br>" +
-                    f"<b>Cuartel:</b> {row.get('Cuartel', 'N/A')}<br>" +
-                    f"<b>Variedad:</b> {row.get('Variedad', 'N/A')}<br>" +
-                    f"<b>{indice.upper()}:</b> {row['indice_valor']}<br>" +
-                    f"<b>Clase:</b> {row.get(col_clase, 'N/A')}<br>" +
-                    f"<b>Altura:</b> {row['altura_str']}",
-        axis=1
-    )
-    
-    # Crear figura base
-    fig = go.Figure()
-    
-    # Agregar polígonos de cuarteles primero
-    if gdf_poligonos is not None and len(gdf_poligonos) > 0:
-        cuarteles_en_datos = df['Cuartel'].unique() if 'Cuartel' in df.columns else []
-        gdf_filtrado = gdf_poligonos[gdf_poligonos['Cuartel'].isin(cuarteles_en_datos)]
-        
-        if len(gdf_filtrado) > 0:
-            stats_cuartel = df.groupby('Cuartel')[indice].mean().to_dict()
-            
-            for _, row in gdf_filtrado.iterrows():
-                cuartel_nombre = row['Cuartel']
-                media_indice = stats_cuartel.get(cuartel_nombre, 0)
-                
-                geom = row.geometry
-                if geom.geom_type == 'Polygon':
-                    coords = list(geom.exterior.coords)
-                elif geom.geom_type == 'MultiPolygon':
-                    coords = list(geom.geoms[0].exterior.coords)
-                else:
-                    continue
-                
-                lons = [c[0] for c in coords]
-                lats = [c[1] for c in coords]
-                
-                hover_poligono = (f"<b>{cuartel_nombre}</b><br>"
-                                 f"Especie: {row.get('Especie', 'N/A')}<br>"
-                                 f"Variedad: {row.get('Variedad', 'N/A')}<br>"
-                                 f"Superficie: {row.get('Superficie_ha', 0):.2f} ha<br>"
-                                 f"{indice.upper()} μ: {media_indice:.3f}")
-                
-                fig.add_trace(go.Scattermapbox(
-                    lon=lons,
-                    lat=lats,
-                    mode='lines',
-                    line=dict(width=3, color='#00BFFF'),
-                    fill='none',
-                    name=cuartel_nombre,
-                    hoverinfo='text',
-                    hovertext=hover_poligono,
-                    showlegend=False
-                ))
-    
-    # Agrupar puntos por clase usando la misma lógica que asignar_color_hex
-    def clasificar_punto(clase_str):
-        clase_lower = str(clase_str).lower()
-        if 'muy bajo' in clase_lower:
-            return 'Muy bajo'
-        elif 'medio-alto' in clase_lower or 'medio alto' in clase_lower:
-            return 'Medio-alto'
-        elif 'medio' in clase_lower:
-            return 'Medio'
-        elif 'bajo' in clase_lower:
-            return 'Bajo'
-        elif 'alto' in clase_lower:
-            return 'Alto'
-        return 'Sin dato'
-    
-    df_plot['clase_simple'] = df_plot[col_clase].apply(clasificar_punto)
-    
-    clases_orden = ['Muy bajo', 'Bajo', 'Medio', 'Medio-alto', 'Alto']
-    
-    for clase in clases_orden:
-        df_clase = df_plot[df_plot['clase_simple'] == clase]
-        if len(df_clase) == 0:
-            continue
-        
-        color = COLORES_CLASE.get(clase, '#969696')
-        
-        fig.add_trace(go.Scattermapbox(
-            lon=df_clase['lon'],
-            lat=df_clase['lat'],
-            mode='markers',
-            marker=dict(
-                size=radio_puntos * 3,
-                color=color,
-                opacity=0.85
-            ),
-            name=clase,
-            hoverinfo='text',
-            hovertext=df_clase['hover_text'],
-            showlegend=True
-        ))
-    
-    center_lat = df['lat'].mean()
-    center_lon = df['lon'].mean()
-    
-    lat_range = df['lat'].max() - df['lat'].min()
-    lon_range = df['lon'].max() - df['lon'].min()
-    max_range = max(lat_range, lon_range)
-    
-    # Agregar margen para ver el polígono completo (15% extra)
-    max_range = max_range * 1.15
-    
-    # Zoom ajustado para ver polígono completo
-    if max_range < 0.003:
-        zoom = 17
-    elif max_range < 0.006:
-        zoom = 16
-    elif max_range < 0.01:
-        zoom = 15
-    elif max_range < 0.02:
-        zoom = 14
-    elif max_range < 0.05:
-        zoom = 13
-    elif max_range < 0.1:
-        zoom = 12
-    else:
-        zoom = 11
-    
-    # Usar estilo white-bg con capa satelital de Google
-    fig.update_layout(
-        mapbox=dict(
-            style="white-bg",
-            center=dict(lat=center_lat, lon=center_lon),
-            zoom=zoom,
-            layers=[{
-                "below": "traces",
-                "sourcetype": "raster",
-                "sourceattribution": "Google",
-                "source": [
-                    "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
-                ]
-            }]
-        ),
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=500,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01,
-            bgcolor="rgba(255,255,255,0.9)",
-            font=dict(size=10)
-        ),
-        hoverlabel=dict(
-            bgcolor="white",
-            font_size=11,
-            font_family="Arial"
-        )
-    )
-    
-    return fig
-
-
-# =============================================================================
-# COMPONENTES DE GRÁFICOS
-# =============================================================================
-
-def crear_grafico_distribucion(df, indice, titulo=""):
-    """Gráfico de distribución por clase."""
-    col_clase = f"{indice}_clase"
+def normalizar_clases(df, col_clase):
+    """Normaliza los nombres de las clases al estándar de 7 clases."""
     if col_clase not in df.columns:
+        return df
+    
+    # Mapeo de nombres antiguos a nuevos
+    mapeo = {
+        'Muy bajo': 'Muy bajo',
+        'Bajo': 'Bajo',
+        'Medio-bajo': 'Medio-bajo',
+        'Medio bajo': 'Medio-bajo',
+        'Medio': 'Medio',
+        'Medio-alto': 'Medio-alto',
+        'Medio alto': 'Medio-alto',
+        'Alto': 'Alto',
+        'Muy alto': 'Muy alto',
+        'Sin dato': 'Sin dato',
+        None: 'Sin dato',
+        '': 'Sin dato'
+    }
+    
+    df[col_clase] = df[col_clase].map(lambda x: mapeo.get(x, x) if pd.notna(x) else 'Sin dato')
+    return df
+
+
+# =============================================================================
+# FUNCIONES DE VISUALIZACIÓN
+# =============================================================================
+
+def crear_mapa_puntos(df, indice, radio_puntos=3, gdf_poligonos=None):
+    """Crea mapa de puntos con Plotly."""
+    
+    col_clase = obtener_columna_clase(df, indice)
+    if col_clase is None:
+        st.warning(f"No se encontró columna de clase para {indice}")
         return None
     
-    conteo = df[col_clase].value_counts().reset_index()
-    conteo.columns = ['Clase', 'Cantidad']
-    conteo['Porcentaje'] = (conteo['Cantidad'] / conteo['Cantidad'].sum() * 100).round(1)
+    df = normalizar_clases(df, col_clase)
     
-    # Orden correcto
-    orden_clases = ['muy bajo', 'bajo', 'medio', 'medio-alto', 'alto']
+    # Preparar datos
+    df_map = df.dropna(subset=['lat', 'lon']).copy()
+    if len(df_map) == 0:
+        return None
     
-    def obtener_orden(clase):
-        clase_lower = str(clase).lower()
-        for i, o in enumerate(orden_clases):
-            if o in clase_lower:
-                if o == 'medio' and 'alto' in clase_lower:
-                    continue
-                return i
-        return 99
+    # Limitar puntos si hay demasiados
+    max_puntos = 50000
+    if len(df_map) > max_puntos:
+        df_map = df_map.sample(n=max_puntos, random_state=42)
     
-    conteo['orden'] = conteo['Clase'].apply(obtener_orden)
-    conteo = conteo.sort_values('orden')
-    conteo['Color'] = conteo['Clase'].apply(asignar_color_hex)
-    
-    def etiqueta_corta(clase):
-        clase_lower = str(clase).lower()
-        if 'muy bajo' in clase_lower:
-            return 'Muy Bajo'
-        elif 'medio-alto' in clase_lower or 'medio alto' in clase_lower:
-            return 'Medio-Alto'
-        elif 'bajo' in clase_lower:
-            return 'Bajo'
-        elif 'medio' in clase_lower:
-            return 'Medio'
-        elif 'alto' in clase_lower:
-            return 'Alto'
-        return str(clase)[:15]
-    
-    conteo['Etiqueta'] = conteo['Clase'].apply(etiqueta_corta)
-    
+    # Crear figura
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=conteo['Etiqueta'], 
-        y=conteo['Cantidad'],
-        marker_color=conteo['Color'],
-        text=conteo['Porcentaje'].apply(lambda x: f"{x}%"),
-        textposition='outside',
-        textfont=dict(size=11)
-    ))
     
-    y_max = conteo['Cantidad'].max() * 1.20
+    # Agregar polígonos si existen
+    if gdf_poligonos is not None:
+        for idx, row in gdf_poligonos.iterrows():
+            if row.geometry.geom_type == 'Polygon':
+                coords = list(row.geometry.exterior.coords)
+                lons = [c[0] for c in coords]
+                lats = [c[1] for c in coords]
+                fig.add_trace(go.Scattermapbox(
+                    lon=lons, lat=lats,
+                    mode='lines',
+                    line=dict(width=2, color='#333'),
+                    hoverinfo='skip',
+                    showlegend=False
+                ))
+    
+    # Agregar puntos por clase
+    for clase in ORDEN_CLASES:
+        df_clase = df_map[df_map[col_clase] == clase]
+        if len(df_clase) == 0:
+            continue
+        
+        color = COLORES_CLASE.get(clase, '#999999')
+        
+        # Preparar hover text
+        hover_text = []
+        for _, row in df_clase.iterrows():
+            text = f"<b>ID:</b> {row.get('id', 'N/A')}<br>"
+            text += f"<b>Clase:</b> {clase}<br>"
+            text += f"<b>{indice.upper()}:</b> {row.get(indice, 'N/A'):.3f}<br>" if pd.notna(row.get(indice)) else ""
+            text += f"<b>Cuartel:</b> {row.get('Cuartel', 'N/A')}<br>"
+            if 'cultivo' in row:
+                text += f"<b>Cultivo:</b> {row.get('cultivo', 'N/A')}<br>"
+            hover_text.append(text)
+        
+        fig.add_trace(go.Scattermapbox(
+            lon=df_clase['lon'],
+            lat=df_clase['lat'],
+            mode='markers',
+            marker=dict(size=radio_puntos, color=color),
+            name=clase,
+            text=hover_text,
+            hoverinfo='text'
+        ))
+    
+    # Configurar layout
+    center_lat = df_map['lat'].mean()
+    center_lon = df_map['lon'].mean()
     
     fig.update_layout(
-        title=dict(text=titulo or f"Distribución {indice.upper()}", font=dict(size=14)),
-        xaxis_title="",
-        yaxis_title="N° Árboles",
-        yaxis=dict(range=[0, y_max]),
-        showlegend=False,
-        height=350,
-        margin=dict(l=50, r=30, t=50, b=60),
-        xaxis_tickangle=0
+        mapbox=dict(
+            style='open-street-map',
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=14
+        ),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=500,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.8)"
+        )
     )
+    
     return fig
 
 
-def crear_histograma(df, indice, titulo=""):
-    """Histograma de valores."""
-    if indice not in df.columns:
+def crear_grafico_distribucion(df, indice):
+    """Crea gráfico de distribución de clases."""
+    
+    col_clase = obtener_columna_clase(df, indice)
+    if col_clase is None:
         return None
     
-    fig = px.histogram(df, x=indice, nbins=40, color_discrete_sequence=['#1a9641'])
-    media = df[indice].mean()
-    fig.add_vline(x=media, line_dash="dash", line_color="red", annotation_text=f"μ={media:.3f}")
-    fig.update_layout(title=titulo or f"Histograma {indice.upper()}", height=300, margin=dict(l=40, r=40, t=40, b=40))
-    return fig
-
-
-def crear_boxplot(df, indice, titulo=""):
-    """Boxplot."""
-    if indice not in df.columns or 'Cuartel' not in df.columns:
+    df = normalizar_clases(df, col_clase)
+    
+    # Contar por clase
+    conteos = df[col_clase].value_counts()
+    
+    # Ordenar según ORDEN_CLASES
+    data = []
+    for clase in ORDEN_CLASES:
+        if clase in conteos.index:
+            data.append({'Clase': clase, 'Cantidad': conteos[clase]})
+    
+    df_plot = pd.DataFrame(data)
+    
+    if len(df_plot) == 0:
         return None
     
-    fig = px.box(df, x='Cuartel', y=indice, color='Cuartel')
-    fig.update_layout(title=titulo or f"Boxplot {indice.upper()}", height=300, showlegend=False, margin=dict(l=40, r=40, t=40, b=40))
+    # Crear gráfico
+    fig = px.bar(
+        df_plot,
+        x='Clase',
+        y='Cantidad',
+        color='Clase',
+        color_discrete_map=COLORES_CLASE,
+        category_orders={'Clase': ORDEN_CLASES}
+    )
+    
+    fig.update_layout(
+        showlegend=False,
+        xaxis_title="",
+        yaxis_title="Cantidad de árboles",
+        height=300
+    )
+    
     return fig
+
+
+def crear_grafico_pie(df, indice):
+    """Crea gráfico de pie de distribución."""
+    
+    col_clase = obtener_columna_clase(df, indice)
+    if col_clase is None:
+        return None
+    
+    df = normalizar_clases(df, col_clase)
+    
+    # Contar por clase
+    conteos = df[col_clase].value_counts()
+    
+    # Ordenar
+    data = []
+    colors = []
+    for clase in ORDEN_CLASES:
+        if clase in conteos.index and conteos[clase] > 0:
+            data.append({'Clase': clase, 'Cantidad': conteos[clase]})
+            colors.append(COLORES_CLASE.get(clase, '#999'))
+    
+    df_plot = pd.DataFrame(data)
+    
+    if len(df_plot) == 0:
+        return None
+    
+    fig = px.pie(
+        df_plot,
+        values='Cantidad',
+        names='Clase',
+        color='Clase',
+        color_discrete_map=COLORES_CLASE
+    )
+    
+    fig.update_traces(textposition='inside', textinfo='percent+label')
+    fig.update_layout(height=350, showlegend=False)
+    
+    return fig
+
+
+def mostrar_info_indice(indice):
+    """Muestra información del índice seleccionado."""
+    
+    if indice not in INDICES_INFO:
+        return
+    
+    info = INDICES_INFO[indice]
+    
+    with st.expander(f"ℹ️ Información sobre {info['nombre']}", expanded=False):
+        st.markdown(f"**{info['nombre_completo']}**")
+        st.markdown(f"*Categoría: {info['categoria']}*")
+        st.markdown(info['descripcion'])
+        
+        if 'rangos_7clases' in info:
+            st.markdown("**Rangos de clasificación (7 clases):**")
+            cols = st.columns(7)
+            for i, (clase, rango) in enumerate(zip(ORDEN_CLASES[:7], info['rangos_7clases'])):
+                with cols[i]:
+                    color = COLORES_CLASE.get(clase, '#999')
+                    st.markdown(f'<span style="background-color:{color}; padding: 2px 6px; border-radius: 3px; font-size: 0.8em;">{rango}</span>', unsafe_allow_html=True)
+                    st.caption(clase)
 
 
 # =============================================================================
-# FUNCIONES DE TABS
+# TABS
 # =============================================================================
 
-def mostrar_kpis(df, indice, prefix="", info_superficie=None):
-    """Muestra KPIs incluyendo superficie si está disponible."""
+def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos):
+    """Tab Resumen."""
     
-    # Usar 2 filas para mejor visualización
-    if info_superficie:
-        # Primera fila: métricas principales
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric(f"{prefix}🌳 Árboles", f"{len(df):,}")
-        with col2:
-            st.metric("📐 Superficie", f"{info_superficie['superficie_total']:.1f} ha")
-        with col3:
-            st.metric("🌿 Densidad", f"{info_superficie['arboles_por_ha']:,.0f} árb/ha")
-        with col4:
-            if 'Cuartel' in df.columns:
-                st.metric("📍 Cuarteles", df['Cuartel'].nunique())
-        
-        # Segunda fila: métricas del índice
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            if indice in df.columns:
-                st.metric(f"📊 {indice.upper()} μ", f"{df[indice].mean():.3f}")
-        with col2:
-            col_clase = f"{indice}_clase"
-            if col_clase in df.columns:
-                pct = (df[col_clase].apply(lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()).sum() / len(df) * 100)
-                st.metric("✅ % Sanos", f"{pct:.1f}%")
-        with col3:
-            if 'altura_m' in df.columns and df['altura_m'].notna().any():
-                st.metric("📏 Altura μ", f"{df['altura_m'].mean():.2f} m")
-        with col4:
-            if indice in df.columns:
-                st.metric(f"📉 {indice.upper()} σ", f"{df[indice].std():.3f}")
-    else:
-        # Sin superficie - una sola fila
-        cols = st.columns(5)
-        with cols[0]:
-            st.metric(f"{prefix}🌳 Árboles", f"{len(df):,}")
-        with cols[1]:
-            if indice in df.columns:
-                st.metric(f"📊 {indice.upper()} μ", f"{df[indice].mean():.3f}")
-        with cols[2]:
-            col_clase = f"{indice}_clase"
-            if col_clase in df.columns:
-                pct = (df[col_clase].apply(lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()).sum() / len(df) * 100)
-                st.metric("✅ % Sanos", f"{pct:.1f}%")
-        with cols[3]:
-            if 'altura_m' in df.columns and df['altura_m'].notna().any():
-                st.metric("📏 Altura μ", f"{df['altura_m'].mean():.2f} m")
-        with cols[4]:
-            if 'Cuartel' in df.columns:
-                st.metric("📍 Cuarteles", df['Cuartel'].nunique())
-
-
-def tab_resumen(df, indice, fechas_sel, radio_puntos, gdf_poligonos=None):
-    """Tab Resumen con comparación lado a lado."""
+    col_clase = obtener_columna_clase(df, indice)
     
-    # Mostrar descripción del índice
-    mostrar_descripcion_indice(indice)
+    # Info del índice
+    mostrar_info_indice(indice)
     
-    fechas_unicas = []
-    if 'fecha_vuelo' in df.columns:
-        fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
+    # KPIs
+    st.subheader("📊 Métricas Clave")
     
-    mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
+    cols = st.columns(6)
     
-    # Obtener info de superficie
-    info_sup = obtener_info_superficie(df, gdf_poligonos)
+    with cols[0]:
+        st.metric("Total Árboles", f"{len(df):,}")
     
-    if mostrar_comparacion:
-        st.subheader("📊 Comparación de Vuelos")
-        
-        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
-        df1 = df[df['fecha_vuelo'].astype(str) == fecha1]
-        df2 = df[df['fecha_vuelo'].astype(str) == fecha2]
-        
-        # Info superficie para cada vuelo
-        info_sup1 = obtener_info_superficie(df1, gdf_poligonos)
-        info_sup2 = obtener_info_superficie(df2, gdf_poligonos)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"### 📅 Vuelo: {fecha1}")
-            mostrar_kpis(df1, indice, info_superficie=info_sup1)
-        with col2:
-            st.markdown(f"### 📅 Vuelo: {fecha2}")
-            mostrar_kpis(df2, indice, info_superficie=info_sup2)
-        
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"**🗺️ Mapa - {fecha1}**")
-            # Mostrar todos si hay menos de 10000, sino sampling a 8000
-            df1_sample = df1.sample(n=min(8000, len(df1)), random_state=42) if len(df1) > 10000 else df1
-            mapa1 = crear_mapa_plotly_satelite(df1_sample, indice, radio_puntos, f"{indice.upper()} - {fecha1}", gdf_poligonos)
-            if mapa1:
-                st.plotly_chart(mapa1, use_container_width=True, key="mapa1")
-        
-        with col2:
-            st.markdown(f"**🗺️ Mapa - {fecha2}**")
-            # Mostrar todos si hay menos de 10000, sino sampling a 8000
-            df2_sample = df2.sample(n=min(8000, len(df2)), random_state=42) if len(df2) > 10000 else df2
-            mapa2 = crear_mapa_plotly_satelite(df2_sample, indice, radio_puntos, f"{indice.upper()} - {fecha2}", gdf_poligonos)
-            if mapa2:
-                st.plotly_chart(mapa2, use_container_width=True, key="mapa2")
-        
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1 = crear_grafico_distribucion(df1, indice, f"Distribución - {fecha1}")
-            if fig1:
-                st.plotly_chart(fig1, use_container_width=True)
-        with col2:
-            fig2 = crear_grafico_distribucion(df2, indice, f"Distribución - {fecha2}")
-            if fig2:
-                st.plotly_chart(fig2, use_container_width=True)
+    with cols[1]:
+        if indice in df.columns:
+            media = df[indice].mean()
+            st.metric(f"Media {indice.upper()}", f"{media:.3f}" if pd.notna(media) else "N/A")
     
-    else:
-        mostrar_kpis(df, indice, info_superficie=info_sup)
-        st.markdown("---")
-        
-        cols = st.columns(4)
-        campos = [('Especie', '🌿'), ('Variedad', '🍒'), ('Plantacion', '📅'), ('Patron', '🌱')]
-        for i, (campo, emoji) in enumerate(campos):
-            with cols[i]:
-                if campo in df.columns:
-                    valores = ', '.join(map(str, df[campo].dropna().unique()))
-                    st.markdown(f"**{emoji} {campo}:** {valores}")
-        
-        st.markdown("---")
-        
-        # Análisis automático (ahora muestra directamente)
-        generar_analisis_automatico(df, indice, fechas_sel)
-        
-        st.markdown("---")
-        
-        col1, col2 = st.columns([3, 2])
-        
-        with col1:
-            st.subheader(f"🗺️ Mapa - {indice.upper()}")
-            st.caption("💡 Pasa el mouse sobre los puntos o polígonos para ver info")
-            
-            # Mostrar todos si hay menos de 12000, sino sampling a 10000
-            df_mapa = df.sample(n=min(10000, len(df)), random_state=42) if len(df) > 12000 else df
-            mapa = crear_mapa_plotly_satelite(df_mapa, indice, radio_puntos, gdf_poligonos=gdf_poligonos)
-            if mapa:
-                st.plotly_chart(mapa, use_container_width=True, key="mapa_single")
-        
-        with col2:
-            st.subheader("📊 Distribución")
-            fig = crear_grafico_distribucion(df, indice)
-            if fig:
-                fig.update_layout(height=550)
-                st.plotly_chart(fig, use_container_width=True)
+    with cols[2]:
+        if indice in df.columns:
+            std = df[indice].std()
+            st.metric("Desv. Estándar", f"{std:.3f}" if pd.notna(std) else "N/A")
     
-    # Tabla resumen por cuartel con superficie
-    if info_sup and gdf_poligonos is not None:
-        st.markdown("---")
-        st.subheader("📋 Resumen por Cuartel")
-        
-        # Verificar si hay múltiples vuelos
-        fechas_en_datos = []
-        if 'fecha_vuelo' in df.columns:
-            fechas_en_datos = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
-        
-        hay_multiples_vuelos = len(fechas_en_datos) >= 2
-        
-        # Crear tabla solo con cuarteles que tienen datos en el dataframe filtrado
-        resumen_list = []
-        
-        if hay_multiples_vuelos:
-            # Mostrar tabla con ambos vuelos para comparar
-            for cuartel in df['Cuartel'].dropna().unique():
-                for fecha in fechas_en_datos:
-                    df_cuartel = df[(df['Cuartel'] == cuartel) & (df['fecha_vuelo'].astype(str) == fecha)]
-                    
-                    if len(df_cuartel) == 0:
-                        continue
-                    
-                    especie_datos = df_cuartel['Especie'].iloc[0] if 'Especie' in df_cuartel.columns else 'N/A'
-                    variedad_datos = df_cuartel['Variedad'].iloc[0] if 'Variedad' in df_cuartel.columns else 'N/A'
-                    
-                    poligono_info = gdf_poligonos[gdf_poligonos['Cuartel'] == cuartel]
-                    sup_ha = poligono_info.iloc[0].get('Superficie_ha', 0) if len(poligono_info) > 0 else 0
-                    
-                    n_arboles = len(df_cuartel)
-                    
-                    col_clase = f"{indice}_clase"
-                    pct_sanos = 0
-                    if col_clase in df_cuartel.columns:
-                        pct_sanos = (df_cuartel[col_clase].apply(
-                            lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()
-                        ).sum() / len(df_cuartel) * 100)
-                    
-                    resumen_list.append({
-                        'Vuelo': fecha,
-                        'Cuartel': cuartel,
-                        'Especie': especie_datos,
-                        'Variedad': variedad_datos,
-                        'Sup. (ha)': round(sup_ha, 1) if sup_ha > 0 else None,
-                        'N° Árboles': n_arboles,
-                        'Árb/ha': int(round(n_arboles / sup_ha, 0)) if sup_ha > 0 else None,
-                        f'{indice.upper()} μ': round(df_cuartel[indice].mean(), 3),
-                        '% Sanos': round(pct_sanos, 1)
-                    })
-        else:
-            # Tabla simple sin columna de vuelo
-            for cuartel in df['Cuartel'].dropna().unique():
-                df_cuartel = df[df['Cuartel'] == cuartel]
-                
-                if len(df_cuartel) == 0:
-                    continue
-                
-                especie_datos = df_cuartel['Especie'].iloc[0] if 'Especie' in df_cuartel.columns else 'N/A'
-                variedad_datos = df_cuartel['Variedad'].iloc[0] if 'Variedad' in df_cuartel.columns else 'N/A'
-                
-                poligono_info = gdf_poligonos[gdf_poligonos['Cuartel'] == cuartel]
-                
-                if len(poligono_info) > 0:
-                    row = poligono_info.iloc[0]
-                    sup_ha = row.get('Superficie_ha', 0)
-                    año_pol = row.get('Apla', 'N/A')
-                else:
-                    sup_ha = 0
-                    año_pol = 'N/A'
-                
-                n_arboles = len(df_cuartel)
-                
-                col_clase = f"{indice}_clase"
-                pct_sanos = 0
-                if col_clase in df_cuartel.columns:
-                    pct_sanos = (df_cuartel[col_clase].apply(
-                        lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()
-                    ).sum() / len(df_cuartel) * 100)
-                
-                resumen_list.append({
-                    'Cuartel': cuartel,
-                    'Especie': especie_datos,
-                    'Variedad': variedad_datos,
-                    'Año': año_pol,
-                    'Sup. (ha)': round(sup_ha, 1) if sup_ha > 0 else None,
-                    'N° Árboles': n_arboles,
-                    'Árb/ha': int(round(n_arboles / sup_ha, 0)) if sup_ha > 0 else None,
-                    f'{indice.upper()} μ': round(df_cuartel[indice].mean(), 3),
-                    '% Sanos': round(pct_sanos, 1)
-                })
-        
-        if resumen_list:
-            df_resumen = pd.DataFrame(resumen_list)
-            if hay_multiples_vuelos:
-                df_resumen = df_resumen.sort_values(['Cuartel', 'Vuelo'])
-            else:
-                df_resumen = df_resumen.sort_values('Cuartel')
-            
-            st.dataframe(
-                df_resumen.style.format({
-                    'Sup. (ha)': lambda x: '-' if pd.isna(x) else f'{x:.1f}',
-                    'N° Árboles': lambda x: f'{x:,.0f}'.replace(',', '.'),
-                    'Árb/ha': lambda x: '-' if pd.isna(x) else f'{x:,.0f}'.replace(',', '.'),
-                    f'{indice.upper()} μ': '{:.3f}',
-                    '% Sanos': '{:.1f}'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
+    with cols[3]:
+        if col_clase and col_clase in df.columns:
+            df_norm = normalizar_clases(df.copy(), col_clase)
+            buenos = df_norm[df_norm[col_clase].isin(['Alto', 'Muy alto', 'Medio-alto'])].shape[0]
+            pct = (buenos / len(df)) * 100 if len(df) > 0 else 0
+            st.metric("% Buen Estado", f"{pct:.1f}%")
     
-    # Análisis comparativo al final (después de todo lo visual)
-    if mostrar_comparacion:
-        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
-        st.markdown("---")
-        generar_analisis_comparativo(df, indice, fecha1, fecha2)
+    with cols[4]:
+        if col_clase and col_clase in df.columns:
+            df_norm = normalizar_clases(df.copy(), col_clase)
+            criticos = df_norm[df_norm[col_clase].isin(['Muy bajo', 'Bajo'])].shape[0]
+            pct = (criticos / len(df)) * 100 if len(df) > 0 else 0
+            st.metric("% Crítico", f"{pct:.1f}%", delta_color="inverse")
+    
+    with cols[5]:
+        if 'Cuartel' in df.columns:
+            st.metric("Cuarteles", df['Cuartel'].nunique())
+    
+    st.markdown("---")
+    
+    # Mapa y gráficos
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("🗺️ Mapa de Distribución")
+        fig_mapa = crear_mapa_puntos(df, indice, radio_puntos, gdf_poligonos)
+        mostrar_mapa_seguro(fig_mapa, 500, "mapa_resumen")
+    
+    with col2:
+        st.subheader("📊 Distribución por Clase")
+        fig_pie = crear_grafico_pie(df, indice)
+        if fig_pie:
+            st.plotly_chart(fig_pie, use_container_width=True)
+        
+        fig_bar = crear_grafico_distribucion(df, indice)
+        if fig_bar:
+            st.plotly_chart(fig_bar, use_container_width=True)
 
 
 def tab_analisis(df, indice, fechas_sel):
     """Tab Análisis."""
     
-    mostrar_descripcion_indice(indice)
+    st.subheader("📈 Análisis Detallado")
     
-    fechas_unicas = []
-    if 'fecha_vuelo' in df.columns:
-        fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
+    col1, col2 = st.columns(2)
     
-    mostrar_comparacion = len(fechas_unicas) >= 2 and fechas_sel == 'Todas'
+    with col1:
+        # Histograma
+        if indice in df.columns:
+            st.markdown(f"**Distribución de valores {indice.upper()}**")
+            fig_hist = px.histogram(
+                df[df[indice].notna()],
+                x=indice,
+                nbins=50,
+                color_discrete_sequence=['#1a9850']
+            )
+            fig_hist.update_layout(
+                xaxis_title=indice.upper(),
+                yaxis_title="Frecuencia",
+                height=350
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
     
-    if mostrar_comparacion:
-        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
-        df1 = df[df['fecha_vuelo'].astype(str) == fecha1]
-        df2 = df[df['fecha_vuelo'].astype(str) == fecha2]
-        
-        st.subheader("📊 Histogramas")
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1 = crear_histograma(df1, indice, f"Histograma - {fecha1}")
-            if fig1:
-                st.plotly_chart(fig1, use_container_width=True)
-        with col2:
-            fig2 = crear_histograma(df2, indice, f"Histograma - {fecha2}")
-            if fig2:
-                st.plotly_chart(fig2, use_container_width=True)
-        
+    with col2:
+        # Box plot por cuartel
+        if 'Cuartel' in df.columns and indice in df.columns:
+            st.markdown(f"**{indice.upper()} por Cuartel**")
+            fig_box = px.box(
+                df[df[indice].notna()],
+                x='Cuartel',
+                y=indice,
+                color='Cuartel'
+            )
+            fig_box.update_layout(
+                showlegend=False,
+                height=350
+            )
+            st.plotly_chart(fig_box, use_container_width=True)
+    
+    # Análisis por cultivo si existe
+    if 'cultivo' in df.columns:
         st.markdown("---")
+        st.markdown("**Comparación por Cultivo**")
         
-        st.subheader("📦 Distribución por Cuartel")
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1 = crear_boxplot(df1, indice, f"Por Cuartel - {fecha1}")
-            if fig1:
-                st.plotly_chart(fig1, use_container_width=True)
-        with col2:
-            fig2 = crear_boxplot(df2, indice, f"Por Cuartel - {fecha2}")
-            if fig2:
-                st.plotly_chart(fig2, use_container_width=True)
-        
-        st.markdown("---")
-        
-        st.subheader("📈 Estadísticas Comparativas")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown(f"**{fecha1}**")
-            stats1 = df1[indice].describe().round(3)
-            st.dataframe(stats1)
+            if indice in df.columns:
+                fig_cult = px.box(
+                    df[df[indice].notna()],
+                    x='cultivo',
+                    y=indice,
+                    color='cultivo',
+                    color_discrete_sequence=['#1a9850', '#fc8d59']
+                )
+                fig_cult.update_layout(height=300, showlegend=False)
+                st.plotly_chart(fig_cult, use_container_width=True)
         
         with col2:
-            st.markdown(f"**{fecha2}**")
-            stats2 = df2[indice].describe().round(3)
-            st.dataframe(stats2)
-    
-    else:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("📊 Histograma")
-            fig = crear_histograma(df, indice)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            st.subheader("📦 Por Cuartel")
-            fig = crear_boxplot(df, indice)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+            # Tabla resumen por cultivo
+            resumen = df.groupby('cultivo').agg({
+                indice: ['mean', 'std', 'count']
+            }).round(3)
+            resumen.columns = ['Media', 'Desv.Std', 'N']
+            st.dataframe(resumen, use_container_width=True)
 
 
 def tab_comparacion(df, indice):
-    """Tab Comparación."""
+    """Tab Comparación temporal."""
+    
+    st.subheader("📅 Comparación Temporal")
     
     if 'fecha_vuelo' not in df.columns:
-        st.warning("No hay datos de múltiples vuelos")
+        st.warning("No hay datos de múltiples fechas para comparar")
         return
     
-    fechas_unicas = sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
+    fechas = sorted(df['fecha_vuelo'].dropna().unique())
     
-    if len(fechas_unicas) < 2:
-        st.warning("Se necesitan al menos 2 vuelos para comparar")
+    if len(fechas) < 2:
+        st.warning("Se necesitan al menos 2 fechas de vuelo para comparar")
         return
     
-    mostrar_descripcion_indice(indice)
+    col1, col2 = st.columns(2)
     
-    col_clase = f"{indice}_clase"
+    with col1:
+        fecha1 = st.selectbox("Fecha inicial", fechas, index=0)
+    with col2:
+        fecha2 = st.selectbox("Fecha final", fechas, index=len(fechas)-1)
     
-    st.subheader("📊 Comparación de Distribución entre Vuelos")
+    if fecha1 == fecha2:
+        st.warning("Selecciona fechas diferentes")
+        return
     
-    df_valid = df[df['fecha_vuelo'].notna()].copy()
-    pivot = df_valid.groupby(['fecha_vuelo', col_clase]).size().unstack(fill_value=0)
-    pivot_pct = pivot.div(pivot.sum(axis=1), axis=0) * 100
-    
-    fig = go.Figure()
-    for clase in pivot_pct.columns:
-        fig.add_trace(go.Bar(
-            name=clase, 
-            x=[str(x) for x in pivot_pct.index], 
-            y=pivot_pct[clase], 
-            marker_color=asignar_color_hex(clase)
-        ))
-    fig.update_layout(barmode='stack', height=400, xaxis_title="Fecha de Vuelo", yaxis_title="Porcentaje (%)")
-    st.plotly_chart(fig, use_container_width=True)
+    # Filtrar datos
+    df1 = df[df['fecha_vuelo'] == fecha1]
+    df2 = df[df['fecha_vuelo'] == fecha2]
     
     st.markdown("---")
     
-    st.subheader("📋 Resumen Detallado por Vuelo y Cuartel")
+    # Comparación de distribución
+    col1, col2 = st.columns(2)
     
-    resumen_list = []
-    for fecha in fechas_unicas:
-        df_fecha = df[df['fecha_vuelo'].astype(str) == fecha]
-        
-        for cuartel in df_fecha['Cuartel'].dropna().unique():
-            df_cuartel = df_fecha[df_fecha['Cuartel'] == cuartel]
-            
-            pct_sanos = 0
-            if col_clase in df_cuartel.columns:
-                pct_sanos = (df_cuartel[col_clase].apply(
-                    lambda x: 'alto' in str(x).lower() and 'bajo' not in str(x).lower()
-                ).sum() / len(df_cuartel) * 100)
-            
-            resumen_list.append({
-                'Fecha': fecha,
-                'Cuartel': cuartel,
-                'N° Árboles': len(df_cuartel),
-                'Media': round(df_cuartel[indice].mean(), 3),
-                'Desv.Est': round(df_cuartel[indice].std(), 3),
-                'Mín': round(df_cuartel[indice].min(), 3),
-                'Máx': round(df_cuartel[indice].max(), 3),
-                '% Sanos': round(pct_sanos, 1)
-            })
+    with col1:
+        st.markdown(f"**{fecha1}** ({len(df1):,} árboles)")
+        fig1 = crear_grafico_pie(df1, indice)
+        if fig1:
+            st.plotly_chart(fig1, use_container_width=True)
     
-    df_resumen = pd.DataFrame(resumen_list)
-    df_resumen = df_resumen.sort_values(['Cuartel', 'Fecha'])
+    with col2:
+        st.markdown(f"**{fecha2}** ({len(df2):,} árboles)")
+        fig2 = crear_grafico_pie(df2, indice)
+        if fig2:
+            st.plotly_chart(fig2, use_container_width=True)
     
-    st.dataframe(
-        df_resumen.style.format({
-            'N° Árboles': lambda x: f'{x:,.0f}'.replace(',', '.'),
-            'Media': '{:.3f}',
-            'Desv.Est': '{:.3f}',
-            'Mín': '{:.3f}',
-            'Máx': '{:.3f}',
-            '% Sanos': '{:.1f}'
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    csv = df_resumen.to_csv(index=False)
-    st.download_button("📥 Descargar Comparación CSV", csv, f"comparacion_{indice}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
-    
+    # Evolución temporal
     st.markdown("---")
+    st.markdown("**Evolución temporal del índice**")
     
-    st.subheader("📈 Diferencias entre Vuelos")
-    
-    if len(fechas_unicas) >= 2:
-        fecha1, fecha2 = fechas_unicas[0], fechas_unicas[1]
+    if indice in df.columns:
+        evol = df.groupby('fecha_vuelo')[indice].agg(['mean', 'std', 'count']).reset_index()
+        evol.columns = ['Fecha', 'Media', 'Std', 'N']
         
-        df1_grouped = df[df['fecha_vuelo'].astype(str) == fecha1].groupby('Cuartel')[indice].mean()
-        df2_grouped = df[df['fecha_vuelo'].astype(str) == fecha2].groupby('Cuartel')[indice].mean()
-        
-        diff_df = pd.DataFrame({
-            'Cuartel': df1_grouped.index,
-            f'{fecha1}': df1_grouped.values,
-            f'{fecha2}': df2_grouped.reindex(df1_grouped.index).values,
-        })
-        diff_df['Diferencia'] = diff_df[f'{fecha2}'] - diff_df[f'{fecha1}']
-        diff_df['Cambio %'] = ((diff_df['Diferencia'] / diff_df[f'{fecha1}']) * 100).round(1)
-        diff_df = diff_df.round(3)
-        
-        st.dataframe(
-            diff_df,
-            use_container_width=True,
-            hide_index=True
+        fig_evol = px.line(
+            evol,
+            x='Fecha',
+            y='Media',
+            markers=True,
+            title=f"Evolución de {indice.upper()}"
         )
+        fig_evol.update_layout(height=350)
+        st.plotly_chart(fig_evol, use_container_width=True)
+        
+        # Tabla resumen
+        st.dataframe(evol.round(3), use_container_width=True, hide_index=True)
 
 
 def tab_datos(df, indices_disponibles):
@@ -1483,6 +809,9 @@ def tab_datos(df, indices_disponibles):
     cols_base = ['id', 'Cuartel', 'Especie', 'Variedad', 'lat', 'lon']
     cols_base = [c for c in cols_base if c in df.columns]
     
+    if 'cultivo' in df.columns:
+        cols_base.insert(1, 'cultivo')
+    
     if 'fecha_vuelo' in df.columns:
         cols_base.append('fecha_vuelo')
     
@@ -1490,8 +819,8 @@ def tab_datos(df, indices_disponibles):
     for idx in indices_sel:
         if idx in df.columns:
             cols_indices.append(idx)
-        col_clase = f"{idx}_clase"
-        if col_clase in df.columns:
+        col_clase = obtener_columna_clase(df, idx)
+        if col_clase and col_clase in df.columns:
             cols_indices.append(col_clase)
     
     if 'altura_m' in df.columns:
@@ -1552,9 +881,16 @@ def crear_sidebar(df):
         st.markdown("---")
         st.header("🔍 Filtros")
         
+        # 0. Filtro de cultivo (NUEVO)
+        if 'cultivo' in df.columns:
+            cultivos = ['Todos'] + sorted(df['cultivo'].dropna().unique().tolist())
+            cultivo_sel = st.selectbox("🌱 Cultivo", cultivos)
+            if cultivo_sel != 'Todos':
+                df_filtrado = df_filtrado[df_filtrado['cultivo'] == cultivo_sel]
+        
         # 1. Filtro de fecha
-        if 'fecha_vuelo' in df.columns:
-            fechas = ['Todas'] + sorted([str(f) for f in df['fecha_vuelo'].dropna().unique()])
+        if 'fecha_vuelo' in df_filtrado.columns:
+            fechas = ['Todas'] + sorted([str(f) for f in df_filtrado['fecha_vuelo'].dropna().unique()])
             fechas_sel = st.selectbox("📅 Fecha de Vuelo", fechas)
             if fechas_sel != 'Todas':
                 df_filtrado = df_filtrado[df_filtrado['fecha_vuelo'].astype(str) == fechas_sel]
@@ -1588,8 +924,8 @@ def crear_sidebar(df):
         st.markdown("---")
         st.header("📊 Índice")
         
-        # Solo mostrar los 4 índices más relevantes para frutales
-        INDICES_PERMITIDOS = ['ndvi', 'osavi', 'ndre', 'lci']
+        # Índices más relevantes para frutales
+        INDICES_PERMITIDOS = ['ndvi', 'osavi', 'ndre', 'lci', 'gndvi', 'evi2']
         indices = [k for k in INDICES_PERMITIDOS if k in df.columns and k in INDICES_INFO]
         
         indice_sel = st.selectbox(
@@ -1603,13 +939,22 @@ def crear_sidebar(df):
         radio_puntos = st.slider("Tamaño puntos", 1, 8, 3, 1)
         
         st.markdown("---")
-        st.header("🎨 Leyenda")
-        for clase, color in COLORES_CLASE.items():
+        st.header("🎨 Leyenda (7 Clases)")
+        for clase in ORDEN_CLASES:
             if clase != 'Sin dato':
+                color = COLORES_CLASE.get(clase, '#999')
                 st.markdown(f'<span style="background-color:{color}; padding: 2px 10px; border-radius: 3px;">&nbsp;</span> {clase}', unsafe_allow_html=True)
         
         st.markdown("---")
+        
+        # Resumen de filtros
         st.caption(f"📊 {len(df_filtrado):,} árboles filtrados")
+        if 'cultivo' in df_filtrado.columns:
+            cultivos_uniq = df_filtrado['cultivo'].nunique()
+            st.caption(f"🌱 {cultivos_uniq} cultivo(s)")
+        if 'fecha_vuelo' in df_filtrado.columns:
+            fechas_uniq = df_filtrado['fecha_vuelo'].nunique()
+            st.caption(f"📅 {fechas_uniq} fecha(s)")
     
     return df_filtrado, indice_sel, radio_puntos, fechas_sel, indices
 
@@ -1627,6 +972,7 @@ def main():
     df = cargar_datos(GPKG_PATH)
     if df is None or len(df) == 0:
         st.error(f"No se pudieron cargar datos de: {GPKG_PATH}")
+        st.info("Verifica que el archivo GPKG esté en la carpeta 'datos/'")
         return
     
     # Cargar polígonos
@@ -1658,7 +1004,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: gray; padding: 10px;'>
         <p>Desarrollado por <strong>TeMapeo SPA</strong> | Servicios de Teledetección y Agricultura de Precisión</p>
-        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a></p>
+        <p><a href="https://www.temapeo.com" target="_blank">www.temapeo.com</a> | v8.0 - 7 Clases</p>
     </div>
     """, unsafe_allow_html=True)
 
